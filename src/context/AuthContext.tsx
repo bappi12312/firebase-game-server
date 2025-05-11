@@ -31,17 +31,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (prevProfile) {
         return { ...prevProfile, ...newProfileData };
       }
-      // This case should ideally not happen if called after a profile update
-      // but as a fallback, construct what's possible.
-      const uid = user?.uid || ''; // Get UID from current Firebase user if prevProfile is null
+      const uid = user?.uid || ''; 
       return {
         uid: uid,
         email: user?.email || null,
-        displayName: null, // Will be overwritten by newProfileData if present
+        displayName: null, 
         ...newProfileData,
       } as UserProfile;
     });
-    // Also update isAdmin state if role is changed, though current form only updates displayName
     if (newProfileData.role) {
         setIsAdmin(newProfileData.role === 'admin');
     }
@@ -81,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []); 
 
-  if (loading && typeof window !== 'undefined') { // Added window check for safety though Skeleton is client-side
+  if (loading) { // Removed `&& typeof window !== 'undefined'`
     return (
       <div className="flex flex-col min-h-screen">
         <header className="bg-primary text-primary-foreground shadow-md sticky top-0 z-50">
@@ -112,3 +109,4 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
+
