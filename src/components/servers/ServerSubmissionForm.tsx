@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect, useState, useTransition, useActionState } from 'react';
@@ -39,7 +38,8 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { user, loading: authLoading } = useAuth(); 
   const router = useRouter();
   
-  const [currentFormActionState, setCurrentFormActionState] = useState<SubmitServerFormState>({ message: '', error: false });
+  const initialState: SubmitServerFormState = { message: '', error: false };
+  const [currentFormActionState, formAction] = useActionState(submitServerAction, initialState);
   const [isSubmittingForm, startSubmitTransition] = useTransition();
 
   const form = useForm<ServerFormValues>({
@@ -82,7 +82,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     }
 
     setIsUploadingState(true);
-    setPreviewState(URL.createObjectURL(file)); // Show local preview immediately
+    setPreviewState(URL.createObjectURL(file)); 
 
     try {
       const fileExtension = file.name.split('.').pop();
@@ -97,15 +97,15 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     } catch (error: any) {
       console.error(`Error uploading ${type} file:`, error);
       toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: error.message || "Please try again.", variant: "destructive" });
-      form.setValue(formFieldName, ''); // Clear the URL in form on error
-      setPreviewState(null); // Clear preview on error
+      form.setValue(formFieldName, ''); 
+      setPreviewState(null); 
     } finally {
       setIsUploadingState(false);
     }
   };
 
 
-  const handleFormSubmit = async (data: ServerFormValues) => {
+  const handleFormSubmit = (data: ServerFormValues) => {
     if (!user?.uid) {
       toast({
         title: "Authentication Error",
@@ -116,49 +116,47 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     }
     
     const formData = new FormData();
-    // Append all form data, including the potentially empty bannerUrl/logoUrl if no file was uploaded.
     Object.entries(data).forEach(([key, value]) => {
-       if (value !== undefined && value !== null) { // Check for undefined or null explicitly
-        formData.append(key, String(value)); // FormData values are strings or Blobs
+       if (value !== undefined && value !== null) { 
+        formData.append(key, String(value)); 
       }
     });
     formData.append('userId', user.uid);
 
-    startSubmitTransition(async () => {
-        const result = await submitServerAction(currentFormActionState, formData);
-        setCurrentFormActionState(result); // Update state with the result from the action
-        if (result.error) {
-            toast({
-            title: 'Submission Failed',
-            description: result.message || 'Please check the form for errors.',
-            variant: 'destructive',
-            });
-            if (result.errors) {
-            result.errors.forEach(err => {
-                if (err.path) {
-                    form.setError(err.path as keyof ServerFormValues, { message: err.message });
-                }
-            });
-            }
-        } else {
-            toast({
-            title: 'Success!',
-            description: result.message || 'Server submitted for review.',
-            });
-            form.reset(); 
-            setBannerPreview(null);
-            setLogoPreview(null);
-            // router.push('/dashboard?submissionSuccess=true'); // Action will handle revalidation
-        }
+    startSubmitTransition(() => {
+        formAction(formData);
     });
   };
 
   useEffect(() => {
-    if (currentFormActionState.server && !currentFormActionState.error) {
-        // Redirect on successful submission if server object is present and no error
-        router.push('/dashboard?submissionSuccess=true');
+    if (currentFormActionState?.message) {
+      if (currentFormActionState.error) {
+        toast({
+          title: 'Submission Failed',
+          description: currentFormActionState.message || 'Please check the form for errors.',
+          variant: 'destructive',
+        });
+        if (currentFormActionState.errors) {
+          currentFormActionState.errors.forEach(err => {
+            if (err.path) {
+              form.setError(err.path as keyof ServerFormValues, { message: err.message });
+            }
+          });
+        }
+      } else {
+        toast({
+          title: 'Success!',
+          description: currentFormActionState.message || 'Server submitted for review.',
+        });
+        form.reset(); 
+        setBannerPreview(null);
+        setLogoPreview(null);
+        if (currentFormActionState.server && !currentFormActionState.error) {
+          router.push('/dashboard?submissionSuccess=true');
+        }
+      }
     }
-  }, [currentFormActionState, router]);
+  }, [currentFormActionState, toast, form, router]);
 
 
   if (authLoading) {
@@ -322,7 +320,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               {bannerPreview && <img src={bannerPreview} alt="Banner preview" data-ai-hint="game screenshot" className="mt-2 max-h-40 w-full object-contain rounded-md border" />}
               {!bannerPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-32 bg-muted/50"><ImageUp className="h-8 w-8 text-muted-foreground mb-2" /><p className="text-sm text-muted-foreground">Banner Preview</p></div> }
               <FormDescription>Recommended size: 800x200px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
-              <FormMessage /> {/* For bannerUrl field errors */}
+              <FormMessage>{form.formState.errors.bannerUrl?.message}</FormMessage>
             </FormItem>
 
             <FormItem>
@@ -341,7 +339,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               {logoPreview && <img src={logoPreview} alt="Logo preview" data-ai-hint="square logo" className="mt-2 h-24 w-24 object-contain rounded-md border" />}
               {!logoPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-24 w-24 bg-muted/50"><ImageUp className="h-6 w-6 text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">Logo Preview</p></div> }
               <FormDescription>Recommended size: 100x100px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
-              <FormMessage /> {/* For logoUrl field errors */}
+              <FormMessage>{form.formState.errors.logoUrl?.message}</FormMessage>
             </FormItem>
             
             <FormField
