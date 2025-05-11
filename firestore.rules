@@ -1,0 +1,80 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if a user is an admin
+    function isAdmin(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.role == 'admin';
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Allow anyone to read user profiles (e.g., for display names) - consider if this is desired for your app
+      allow read: if request.auth != null;
+
+      // Allow user to create their own profile document
+      allow create: if request.auth.uid == userId;
+
+      // Allow user to update their own profile data (e.g., displayName)
+      // Disallow changing role unless admin
+      allow update: if request.auth.uid == userId &&
+                       (request.resource.data.role == resource.data.role || isAdmin(request.auth.uid));
+
+
+      // Allow admin to delete user documents (Firestore data, not Auth account)
+      allow delete: if isAdmin(request.auth.uid);
+    }
+
+    // Servers collection
+    match /servers/{serverId} {
+      // Allow anyone to read approved servers
+      // Allow authenticated users to read pending/rejected servers they submitted
+      // Allow admins to read all servers
+      allow read: if resource.data.status == 'approved' ||
+                     (request.auth != null && resource.data.submittedBy == request.auth.uid) ||
+                     (request.auth != null && isAdmin(request.auth.uid));
+
+      // Allow authenticated users to create servers (status will be 'pending' by default via backend logic)
+      allow create: if request.auth != null &&
+                       request.resource.data.submittedBy == request.auth.uid &&
+                       request.resource.data.status == 'pending'; // Ensure status is set to pending
+
+      // Allow server owner to update if status is 'pending' (e.g. edit details before approval)
+      // Allow admin to update any server
+      // Allow authenticated users to increment votes (this is a simplified rule for votes)
+      allow update: if request.auth != null &&
+                      (
+                        (resource.data.submittedBy == request.auth.uid && resource.data.status == 'pending') ||
+                        isAdmin(request.auth.uid) ||
+                        (
+                          request.resource.data.votes == resource.data.votes + 1 &&
+                          request.resource.data.keys().hasAll(['votes', 'lastVotedAt']) && // only votes and lastVotedAt can change during a vote
+                          !request.resource.data.keys().hasAny(['name', 'ipAddress', 'port', 'game', 'description', 'bannerUrl', 'logoUrl', 'tags', 'status', 'submittedBy']) // ensure other fields are not changed
+                        )
+                      );
+
+      // Allow admin to delete any server
+      // Allow server submitter to delete their server if it's still 'pending'
+      allow delete: if request.auth != null &&
+                      (
+                        isAdmin(request.auth.uid) ||
+                        (resource.data.submittedBy == request.auth.uid && resource.data.status == 'pending')
+                      );
+    }
+
+    // User votes subcollection (stores when a user last voted for a server)
+    match /users/{userId}/votes/{serverId} {
+      // Allow user to manage their own vote records
+      allow read, write: if request.auth.uid == userId;
+    }
+
+    // Games collection (if managed in Firestore and not static)
+    // For this app, games are static, so no rules needed here if not in Firestore.
+    // match /games/{gameId} {
+    //   allow read: if true; // Publicly readable
+    //   allow write: if request.auth != null && isAdmin(request.auth.uid); // Only admins can write/update games
+    // }
+  }
+}

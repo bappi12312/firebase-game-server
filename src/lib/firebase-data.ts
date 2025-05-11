@@ -15,6 +15,7 @@ import {
   deleteDoc,
   writeBatch,
   setDoc,
+  type FieldValue,
 } from 'firebase/firestore';
 import { updateProfile as updateAuthProfile, type User as FirebaseUserType } from 'firebase/auth'; // Renamed User to avoid conflict
 import { db, auth } from './firebase';
@@ -42,7 +43,12 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     const userDocRef = doc(db, 'users', uid);
     const docSnap = await getDoc(userDocRef);
     if (docSnap.exists()) {
-      return docSnap.data() as UserProfile;
+      const data = docSnap.data();
+      return {
+        ...data,
+        uid: docSnap.id, // Ensure uid is part of the returned object
+        createdAt: (data.createdAt as Timestamp)?.toDate().toISOString() ?? undefined,
+      } as UserProfile;
     }
     return null;
   } catch (error) {
@@ -66,30 +72,37 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     displayName: user.displayName,
     photoURL: user.photoURL,
     role: role,
-    createdAt: serverTimestamp(), 
+    createdAt: serverTimestamp() as FieldValue, 
   };
 
   try {
     const userDocRef = doc(db, 'users', user.uid);
     await setDoc(userDocRef, userProfileData, { merge: true }); 
-    console.log(`User profile created/updated for UID: ${user.uid}`);
-    // Convert serverTimestamp to a client-side representation if needed immediately
-    const createdProfile = { ...userProfileData };
-    if (createdProfile.createdAt instanceof Timestamp) {
-        // Already a Timestamp, will be handled by Firestore. If you need ISO string now:
-        // createdProfile.createdAt = createdProfile.createdAt.toDate().toISOString();
-    } else {
-        // It's a ServerTimestamp sentinel, for client-side use, reflect it as current date or placeholder
-        // For returning to client, it's better to fetch the doc again if exact server time is critical
-        // Or, for UserProfile type, ensure createdAt is string | Timestamp | FieldValue
-    }
-    return createdProfile as UserProfile;
+    console.log(`User profile created/updated in Firestore for UID: ${user.uid}`);
+    
+    // Return a representation of the profile, converting serverTimestamp for client-side use
+    // Firestore typically returns the committed data, but serverTimestamp might still be a sentinel.
+    // For immediate client use, it's often better to either re-fetch or use a client-side date.
+    // However, for consistency with UserProfile type, we'll return it as is or slightly converted.
+    
+    const createdProfileForReturn: UserProfile = {
+        ...userProfileData,
+        // If we need an ISO string immediately, we'd have to fetch again or use new Date().toISOString()
+        // For now, let's assume the type allows FieldValue or we handle it downstream
+        // For simplicity, let's set createdAt to a new Date string for immediate use if it was a serverTimestamp
+        // This is a common pattern if you don't want to re-fetch immediately.
+        createdAt: new Date().toISOString() // Or handle FieldValue properly if type demands
+    };
+    return createdProfileForReturn;
+
   } catch (error: any) {
      console.error(`Error creating/updating user profile in Firestore for UID: ${user.uid}:`, error);
      let specificMessage = "Could not save user profile to database.";
      if (error instanceof Error) {
         const firebaseErrorCode = (error as any).code;
-        if (firebaseErrorCode) {
+        if (firebaseErrorCode === 'permission-denied') {
+          specificMessage = "Firestore permission denied. Check your security rules.";
+        } else if (firebaseErrorCode) {
             specificMessage += ` (Firebase Error Code: ${firebaseErrorCode}, Message: ${error.message})`;
         } else {
             specificMessage += ` (Details: ${error.message})`;
@@ -120,7 +133,7 @@ export async function updateFirebaseUserProfile(uid: string, data: Partial<Pick<
 
   try {
     // Update Firebase Auth profile
-    if (Object.keys(updates).length > 0) {
+    if (Object.keys(updates).length > 0 && currentUser) { // Added null check for currentUser for safety
       await updateAuthProfile(currentUser, updates);
     }
 
@@ -149,9 +162,7 @@ export async function getFirebaseServers(
     return [];
   }
   try {
-    let serverCollRef = collection(db, 'servers');
-    let q;
-
+    const serverCollRef = collection(db, 'servers');
     const queryConstraints = [];
 
     if (status !== 'all') {
@@ -166,8 +177,6 @@ export async function getFirebaseServers(
     let orderDirection: 'desc' | 'asc' = 'desc';
 
     if (sortBy === 'playerCount') {
-      // Firestore can't sort by a computed "effective player count" (offline = -1) directly with a single query.
-      // So we fetch sorted by online status first, then player count, then re-sort client-side or after fetch.
       queryConstraints.push(orderBy('isOnline', 'desc'));
       queryConstraints.push(orderBy('playerCount', 'desc'));
     } else if (sortBy === 'name') {
@@ -175,14 +184,14 @@ export async function getFirebaseServers(
       orderDirection = 'asc';
       queryConstraints.push(orderBy(orderByField, orderDirection));
     } else if (sortBy === 'submittedAt') {
-      orderByField = 'submittedAt';
+      orderByField = 'submittedAt'; // This should be a Timestamp field for correct sorting
       orderDirection = 'desc';
       queryConstraints.push(orderBy(orderByField, orderDirection));
     } else { // Default to votes
       queryConstraints.push(orderBy(orderByField, orderDirection));
     }
     
-    q = query(serverCollRef, ...queryConstraints);
+    const q = query(serverCollRef, ...queryConstraints);
     
     const serverSnapshot = await getDocs(q);
     let serverList = serverSnapshot.docs.map(docSnap => {
@@ -209,7 +218,7 @@ export async function getFirebaseServers(
     
     // Specific sort for playerCount where offline servers are ranked lower
     if (sortBy === 'playerCount') {
-      serverList.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
+      serverList.sort((a, b) => (b.isOnline && b.playerCount !== undefined ? b.playerCount : -1) - (a.isOnline && a.playerCount !== undefined ? a.playerCount : -1));
     }
 
     return serverList;
@@ -246,7 +255,7 @@ export async function getFirebaseServerById(id: string): Promise<Server | null> 
 }
 
 export async function addFirebaseServer(
-  serverData: Omit<Server, 'id' | 'votes' | 'submittedAt' | 'playerCount' | 'maxPlayers' | 'isOnline' | 'submittedBy' | 'status' | 'lastVotedAt' | 'createdAt'>
+  serverData: Omit<Server, 'id' | 'votes' | 'submittedAt' | 'lastVotedAt' | 'playerCount' | 'maxPlayers' | 'isOnline' | 'submittedBy' | 'status' >
 ): Promise<Server> {
    if (!auth || !db) {
     console.error("Firebase Auth or Firestore is not initialized for addFirebaseServer.");
@@ -262,7 +271,7 @@ export async function addFirebaseServer(
   const newServerData = {
     ...serverData,
     votes: 0,
-    submittedAt: serverTimestamp(),
+    submittedAt: serverTimestamp() as FieldValue,
     submittedBy: currentUser.uid, 
     playerCount: initialStats.playerCount ?? 0,
     maxPlayers: initialStats.maxPlayers ?? 50,
@@ -283,7 +292,7 @@ export async function addFirebaseServer(
     return { 
       id: docRef.id,
       ...finalData,
-      submittedAt: (finalData.submittedAt as Timestamp)?.toDate().toISOString() || new Date().toISOString(),
+      submittedAt: (finalData.submittedAt as Timestamp)?.toDate().toISOString() || new Date().toISOString(), // Convert Timestamp
      } as Server;
   } catch (error) {
     console.error("Error adding Firebase server:", error);
@@ -316,7 +325,7 @@ export async function voteForFirebaseServer(id: string): Promise<Server | null> 
     const userVoteDocRef = doc(db, 'users', currentUser.uid, 'votes', id);
     const userVoteSnap = await getDoc(userVoteDocRef);
     const now = Timestamp.now();
-    const cooldownMs = 24 * 60 * 60 * 1000; 
+    const cooldownMs = 24 * 60 * 60 * 1000; // 24 hours
 
     if (userVoteSnap.exists()) {
         const lastVoteTimestamp = userVoteSnap.data().votedAt as Timestamp;
@@ -330,7 +339,7 @@ export async function voteForFirebaseServer(id: string): Promise<Server | null> 
     const batch = writeBatch(db);
     batch.update(serverDocRef, {
       votes: increment(1),
-      lastVotedAt: now // Also update lastVotedAt on the server document itself if needed for global display
+      lastVotedAt: now 
     });
     batch.set(userVoteDocRef, { votedAt: now }); 
 
@@ -416,6 +425,8 @@ const staticGames: Game[] = [
 ];
 
 export async function getFirebaseGames(): Promise<Game[]> {
+  // In a real scenario, these might be fetched from Firestore if they are dynamic
+  // For now, returning the static list.
   return Promise.resolve([...staticGames]);
 }
 
@@ -432,7 +443,8 @@ export async function getAllFirebaseUsers(): Promise<UserProfile[]> {
         const data = docSnap.data();
         return {
             ...data,
-            createdAt: (data.createdAt as Timestamp)?.toDate().toISOString(),
+            uid: docSnap.id, // Ensure uid from doc id is included
+            createdAt: (data.createdAt as Timestamp)?.toDate().toISOString() ?? undefined, // Convert Timestamp
         } as UserProfile
     });
   } catch (error) {
@@ -467,9 +479,10 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
     const userDocRef = doc(db, 'users', uid);
     batch.delete(userDocRef);
 
-    // Optionally, delete related user data like votes
-    // This would require querying the 'votes' subcollection for the user.
-    // For simplicity, this example only deletes the main user document.
+    // TODO: Optionally, delete related user data like votes subcollection for this user
+    // const votesCollectionRef = collection(db, 'users', uid, 'votes');
+    // const votesSnapshot = await getDocs(votesCollectionRef);
+    // votesSnapshot.docs.forEach(voteDoc => batch.delete(voteDoc.ref));
 
     await batch.commit();
   } catch (error) {
@@ -479,6 +492,8 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
 }
 
 export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
+    // Replace this with actual Steam Query logic (e.g., using a library like 'gamedig')
+    // This often needs to be done from a backend/serverless function due to browser limitations (CORS, UDP)
     return fetchMockServerStats(ipAddress, port);
 }
 
