@@ -8,7 +8,8 @@ import { ServerList } from '@/components/servers/ServerList';
 import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ServerCrash } from 'lucide-react';
+import { ServerCrash, WifiOff } from 'lucide-react';
+import { auth, db } from '@/lib/firebase'; // Import auth and db to check initialization
 
 export default function HomePage() {
   const [allServers, setAllServers] = useState<Server[]>([]);
@@ -23,11 +24,20 @@ export default function HomePage() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+
+    if (!auth || !db) {
+      setError("Firebase is not configured correctly. Please check the console and ensure your .env.local file has the correct Firebase credentials.");
+      setIsLoading(false);
+      console.error("Firebase auth or db is not initialized. Check firebase.ts and .env.local.");
+      // Log current env vars for debugging (careful with sensitive data in public logs if any)
+      console.log("NEXT_PUBLIC_FIREBASE_PROJECT_ID:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ? "Set" : "Not Set");
+      return;
+    }
+
     try {
       const gamesData = await getFirebaseGames();
       setGames(gamesData);
 
-      // Fetch only 'approved' servers for the public list
       const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
       setAllServers(serversData);
 
@@ -46,12 +56,8 @@ export default function HomePage() {
 
 
   const filteredAndSortedServers = useMemo(() => {
-    // Data is already filtered by game, sorted by chosen option, and is 'approved' from `loadData`
-    // Client-side search refinement can still happen if desired, though `getFirebaseServers` also handles it.
     let servers = [...allServers];
     
-    // This client-side search is mostly redundant if backend search in getFirebaseServers is comprehensive
-    // but can be kept for instant feedback on already loaded data subset.
     if (searchTerm) {
       servers = servers.filter(
         (server) =>
@@ -60,7 +66,6 @@ export default function HomePage() {
           (server.tags && server.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
       );
     }
-    // Re-sorting for player count, especially if offline servers need specific handling not fully covered by backend sort
     if (sortBy === 'playerCount') {
        servers.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
     }
@@ -92,15 +97,31 @@ export default function HomePage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
          <Alert variant="destructive" className="w-full max-w-lg">
-          <ServerCrash className="h-5 w-5" />
-          <AlertTitle>Error Loading Servers</AlertTitle>
+          {error.includes("Firebase is not configured") ? <WifiOff className="h-5 w-5" /> : <ServerCrash className="h-5 w-5" />}
+          <AlertTitle>{error.includes("Firebase is not configured") ? "Configuration Issue" : "Error Loading Servers"}</AlertTitle>
           <AlertDescription>
-            {error} Please check your internet connection or try again later. If the problem persists, ensure Firebase is configured correctly.
+            {error}
+            {!error.includes("Firebase is not configured") && " Please check your internet connection or try again later."}
           </AlertDescription>
         </Alert>
       </div>
     );
   }
+  
+  if (!auth || !db) {
+     return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+         <Alert variant="destructive" className="w-full max-w-lg">
+          <WifiOff className="h-5 w-5" />
+          <AlertTitle>Firebase Not Initialized</AlertTitle>
+          <AlertDescription>
+            The application cannot connect to Firebase. Please ensure your environment variables (in .env.local) are correctly set up. Check the browser console for more details.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
 
   return (
     <div>
@@ -115,7 +136,13 @@ export default function HomePage() {
         gameFilter={gameFilter}
         sortBy={sortBy}
       />
-      <ServerList initialServers={filteredAndSortedServers} />
+      {filteredAndSortedServers.length > 0 ? (
+         <ServerList initialServers={filteredAndSortedServers} />
+      ) : (
+        <div className="text-center py-10 text-muted-foreground">
+          <p>No servers found matching your criteria. Try adjusting your filters or search term.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -134,3 +161,4 @@ function CardSkeleton() {
     </div>
   );
 }
+

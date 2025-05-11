@@ -5,14 +5,14 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import type { ReactNode} from 'react';
 import { createContext, useContext, useEffect, useState } from 'react';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase'; // db might also be needed if createUserProfile uses it directly
 import { Skeleton } from '@/components/ui/skeleton';
 import type { UserProfile } from '@/lib/types';
 import { getUserProfile, createUserProfile } from '@/lib/firebase-data';
 
 interface AuthContextType {
   user: FirebaseUser | null;
-  userProfile: UserProfile | null; // Added user profile
+  userProfile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
 }
@@ -26,10 +26,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    if (!auth) {
+    if (!auth) { // Check if Firebase auth object is available
       console.warn("AuthContext: Firebase Auth is not initialized. User authentication will not work.");
       setLoading(false);
-      return;
+      return; // Exit if auth is not initialized
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -37,9 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentUser) {
         try {
           let profile = await getUserProfile(currentUser.uid);
-          if (!profile) {
+          if (!profile && db) { // Ensure db is also initialized before trying to create profile
             // If profile doesn't exist, create it
-            // This might happen on first login after registration
             profile = await createUserProfile(currentUser);
           }
           setUserProfile(profile);
@@ -56,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, []); // Empty dependency array means this runs once on mount
 
   if (loading) {
     return (
@@ -88,3 +87,4 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
+
