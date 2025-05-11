@@ -1,7 +1,7 @@
 'use client';
 
-import { useFormState, useFormStatus } from 'react-dom';
-import { useEffect } from 'react';
+import { useActionState, useEffect } from 'react';
+import { useFormStatus } from 'react-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { submitServerAction, SubmitServerFormState } from '@/lib/actions';
+import { submitServerAction, type SubmitServerFormState } from '@/lib/actions';
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -46,7 +46,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   
   const initialState: SubmitServerFormState = { message: '', error: false };
-  const [state, formAction] = useFormState(submitServerAction, initialState);
+  const [state, formAction] = useActionState(submitServerAction, initialState);
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
