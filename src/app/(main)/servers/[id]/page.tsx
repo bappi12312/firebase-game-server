@@ -89,3 +89,4 @@ export default async function ServerPage({ params }: ServerPageProps) {
 }
 
 export const revalidate = 60; // Revalidate server data periodically
+

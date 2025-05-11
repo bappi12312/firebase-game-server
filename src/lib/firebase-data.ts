@@ -26,6 +26,7 @@ import type { Server, Game, ServerStatus, UserProfile, SortOption, VotedServerIn
 import { serverFormSchema } from '@/lib/schemas'; 
 
 // Simulate fetching server stats (mock for now, replace with actual Steam Query or similar)
+// TODO: Replace this mock function with a real Steam Query implementation for live server stats.
 export async function fetchMockServerStats(ipAddress: string, port: number): Promise<Partial<Server>> {
   // console.log(`Mock fetching stats for ${ipAddress}:${port}`);
   await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 200)); 
@@ -569,6 +570,7 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
 export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
     // In a real app, this would use a Steam Query library or similar.
     // For now, using the mock.
+    // TODO: Replace this mock function with a real Steam Query implementation for live server stats.
     return fetchMockServerStats(ipAddress, port);
 }
 
@@ -933,3 +935,4 @@ export async function updateFirebaseReportStatus(
     throw new Error(formatFirebaseError(error, `updating report status (${reportId} to ${status})`));
   }
 }
+
