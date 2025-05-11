@@ -1,5 +1,4 @@
 
-
 import {
   collection,
   addDoc,
@@ -94,7 +93,9 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     }
     return null;
   } catch (error) {
-    throw new Error(formatFirebaseError(error, `getting user profile for UID ${uid}`));
+    const specificMessage = formatFirebaseError(error, `getting user profile for UID ${uid}`);
+    console.error(specificMessage, error); // Log here before re-throwing
+    throw new Error(specificMessage);
   }
 }
 
@@ -121,18 +122,17 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     const userDocRef = doc(db, 'users', user.uid);
     await setDoc(userDocRef, userProfileData, { merge: true }); 
     
-    // Fetch the just created profile to get the server-generated timestamp correctly converted
     const profileSnap = await getDoc(userDocRef);
     if (profileSnap.exists()) {
         const data = profileSnap.data();
          return {
             ...data,
             uid: profileSnap.id,
-            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()), // Use current date as fallback for immediate return
+            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()),
             emailVerified: data.emailVerified ?? false,
         } as UserProfile;
     }
-    // Fallback, should ideally not be reached if setDoc is successful and data is written
+    
     return {
         uid: user.uid,
         email: user.email,
@@ -144,11 +144,11 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     };
 
   } catch (error: any) {
+     let specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
      if (error.code === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
-        const permissionDeniedMsg = `Firestore permission denied. Check your security rules for users collection. Error details: ${error.message}`;
-        throw new Error(formatFirebaseError({message: permissionDeniedMsg, code: error.code}, `creating/updating user profile in Firestore for UID ${user.uid}`));
+        specificMessage = `Error creating/updating user profile in Firestore for UID ${user.uid}: Firestore permission denied. Check your security rules for the 'users' collection. (Original message: ${error.message})`;
      }
-     const specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
+     console.error(specificMessage, error);
      throw new Error(specificMessage);
   }
 }
@@ -199,7 +199,7 @@ export async function getFirebaseServers(
   sortBy: SortOption = 'votes',
   searchTerm: string = '',
   status: ServerStatus | 'all' = 'approved',
-  submittedByUserId?: string // New parameter
+  submittedByUserId?: string
 ): Promise<Server[]> {
   if (!db) {
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting servers. Database service not available."));
@@ -210,10 +210,6 @@ export async function getFirebaseServers(
     
     if (status !== 'all') {
       qConstraints.push(where('status', '==', status));
-    } else {
-      // If fetching 'all' statuses, and not sorting by 'featured', it's generally fine.
-      // If sorting by 'featured', we might need to reconsider how 'all' status interacts or fetch in stages.
-      // For now, assume 'all' means any status.
     }
 
     if (gameFilter !== 'all') {
@@ -223,51 +219,66 @@ export async function getFirebaseServers(
       qConstraints.push(where('submittedBy', '==', submittedByUserId));
     }
     
-    // Prioritize featured servers for all sorts if status is 'approved' or 'all'
-    if (status === 'approved' || status === 'all') {
+    // Ranking Algorithm Logic:
+    // Default behavior or when explicitly sorting by 'featured'
+    if (sortBy === 'featured') {
+      if (status === 'approved' || status === 'all') { // Only apply featured sort to relevant status views
         qConstraints.push(orderBy('isFeatured', 'desc'));
-    }
+        qConstraints.push(orderBy('votes', 'desc'));
+        qConstraints.push(orderBy('isOnline', 'desc'));
+        qConstraints.push(orderBy('playerCount', 'desc'));
+        qConstraints.push(orderBy('name', 'asc')); // Final tie-breaker
+      } else {
+        // If status is specific (e.g., 'pending') and sortBy is 'featured',
+        // it doesn't make sense to sort by 'featured' status. Fallback to votes.
+        qConstraints.push(orderBy('votes', 'desc'));
+        qConstraints.push(orderBy('name', 'asc'));
+      }
+    } else {
+      // Handle other specific sort options
+      // Always put featured servers first if viewing approved or all statuses
+      if (status === 'approved' || status === 'all') {
+        qConstraints.push(orderBy('isFeatured', 'desc'));
+      }
 
+      let baseOrderByField: keyof Server = 'votes';
+      let baseOrderByDirection: 'asc' | 'desc' = 'desc';
 
-    let baseOrderByField: keyof Server = 'votes';
-    let baseOrderByDirection: 'asc' | 'desc' = 'desc';
-
-    switch (sortBy) {
-      case 'votes':
-        baseOrderByField = 'votes';
-        baseOrderByDirection = 'desc';
-        break;
-      case 'playerCount':
-        if (status === 'all' || status === 'approved') {
-           qConstraints.push(orderBy('isOnline', 'desc')); 
-        }
-        baseOrderByField = 'playerCount'; 
-        baseOrderByDirection = 'desc';
-        break;
-      case 'name':
-        baseOrderByField = 'name';
-        baseOrderByDirection = 'asc';
-        break;
-      case 'submittedAt':
-        baseOrderByField = 'submittedAt';
-        baseOrderByDirection = 'desc';
-        break;
-      case 'featured': // If sorting explicitly by featured, isFeatured is already primary. Add secondary sort.
-        baseOrderByField = 'votes'; // Example: featured servers sorted by votes
-        baseOrderByDirection = 'desc';
-        break;
-      default: 
-        baseOrderByField = 'votes';
-        baseOrderByDirection = 'desc';
-    }
-    
-    // Add the main sorting field, ensuring it's not 'isFeatured' if already added.
-    if (baseOrderByField !== 'isFeatured') {
+      switch (sortBy) {
+        case 'votes':
+          baseOrderByField = 'votes';
+          baseOrderByDirection = 'desc';
+          break;
+        case 'playerCount':
+          // For playerCount sort, also consider online status first if relevant
+          if (status === 'all' || status === 'approved') {
+             qConstraints.push(orderBy('isOnline', 'desc')); 
+          }
+          baseOrderByField = 'playerCount'; 
+          baseOrderByDirection = 'desc';
+          break;
+        case 'name':
+          baseOrderByField = 'name';
+          baseOrderByDirection = 'asc';
+          break;
+        case 'submittedAt':
+          baseOrderByField = 'submittedAt';
+          baseOrderByDirection = 'desc';
+          break;
+        default: // Default to votes if sortBy is unrecognized
+          baseOrderByField = 'votes';
+          baseOrderByDirection = 'desc';
+      }
+      
+      // Add the primary sort field from the switch, ensuring it's not 'isFeatured' again.
+      if (baseOrderByField !== 'isFeatured') {
         qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
-    }
-     
-    if (baseOrderByField !== 'name') {
+      }
+       
+      // Add a final tie-breaker by name if not already the primary sort.
+      if (baseOrderByField !== 'name') {
         qConstraints.push(orderBy('name', 'asc')); 
+      }
     }
     
     const q = query(serverCollRef, ...qConstraints);
@@ -722,11 +733,11 @@ export async function updateServerFeaturedStatus(
     if (isFeatured && durationDays && durationDays > 0) {
       const featuredUntilDate = new Date();
       featuredUntilDate.setDate(featuredUntilDate.getDate() + durationDays);
-      updates.featuredUntil = Timestamp.fromDate(featuredUntilDate) as any; // Store as Timestamp
+      updates.featuredUntil = Timestamp.fromDate(featuredUntilDate) as any; 
     } else if (!isFeatured) {
-      updates.featuredUntil = null; // Explicitly set to null if unfeaturing
-    } else if (isFeatured && !durationDays){ // Feature indefinitely if no duration
-        updates.featuredUntil = null; // Or a specific far future date, but null implies indefinite
+      updates.featuredUntil = null; 
+    } else if (isFeatured && !durationDays){ 
+        updates.featuredUntil = null; 
     }
 
 
