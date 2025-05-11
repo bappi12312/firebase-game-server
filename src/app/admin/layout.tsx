@@ -3,11 +3,11 @@
 
 import Link from 'next/link';
 import { redirect, usePathname } from 'next/navigation';
-import { Home, Users, Server, Settings, BarChart3 } from 'lucide-react';
+import { Home, Users, Server, Settings, BarChart3, FileText } from 'lucide-react'; // Added FileText for Reports
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
-import { Header } from '@/components/layout/Header'; // Re-use main header
+import { Header } from '@/components/layout/Header'; 
 import { Toaster } from "@/components/ui/toaster";
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -15,8 +15,8 @@ const adminNavLinks = [
   { href: '/admin', label: 'Dashboard', icon: Home },
   { href: '/admin/servers', label: 'Manage Servers', icon: Server },
   { href: '/admin/users', label: 'Manage Users', icon: Users },
-  // { href: '/admin/reports', label: 'Reports', icon: BarChart3 },
-  // { href: '/admin/settings', label: 'Site Settings', icon: Settings },
+  { href: '/admin/reports', label: 'Reports', icon: FileText }, // Using FileText as BarChart3 might be for charts
+  // { href: '/admin/settings', label: 'Site Settings', icon: Settings }, // Settings still commented out
 ];
 
 export default function AdminLayout({
@@ -33,7 +33,7 @@ export default function AdminLayout({
         <Header />
         <div className="flex-grow container mx-auto px-4 py-8 flex">
             <aside className="w-64 p-4 space-y-2 border-r">
-                {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+                {[...Array(adminNavLinks.length)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
             </aside>
             <main className="flex-1 p-6">
                 <Skeleton className="h-full w-full" />
@@ -45,8 +45,6 @@ export default function AdminLayout({
   }
 
   if (!user || !isAdmin) {
-    // Redirect to home or login if not an admin
-    // It's better to handle this with middleware in a real app for server-side protection
     redirect('/'); 
     return null; 
   }
