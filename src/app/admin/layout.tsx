@@ -70,7 +70,8 @@ export default function AdminLayout({
       </header>
       <div className="flex-grow container mx-auto px-2 sm:px-4 py-6 md:py-8 flex flex-col md:flex-row">
         <aside className="w-full md:w-60 lg:w-64 p-2 md:p-4 space-y-1 border-b md:border-b-0 md:border-r mb-4 md:mb-0 md:mr-4 flex-shrink-0 bg-card rounded-lg shadow-sm">
-          <nav className="flex flex-row md:flex-col gap-1">
+          {/* Changed flex-row md:flex-col to flex-col for better mobile nav stacking */}
+          <nav className="flex flex-col gap-1">
             {adminNavLinks.map((link) => (
               <Button
                 key={link.href}
