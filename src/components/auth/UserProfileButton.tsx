@@ -2,7 +2,7 @@
 'use client';
 
 import { signOut } from 'firebase/auth';
-import { LogOut, UserCircle, Settings, ShieldCheck } from 'lucide-react';
+import { LogOut, UserCircle, Settings, ShieldCheck, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -19,40 +19,43 @@ import { auth } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 
 export function UserProfileButton() {
-  const { user } = useAuth();
+  const { user, userProfile, isAdmin } = useAuth(); // useAuth now provides isAdmin
   const router = useRouter();
 
   const handleSignOut = async () => {
+    if (!auth) {
+      console.error("Firebase Auth is not initialized.");
+      return;
+    }
     try {
       await signOut(auth);
-      router.push('/'); // Redirect to home page after sign out
+      router.push('/'); 
     } catch (error) {
       console.error('Error signing out: ', error);
-      // Handle error (e.g., show a toast message)
     }
   };
 
   if (!user) {
     return (
-      <>
+      <div className="flex items-center gap-2">
         <Button variant="ghost" asChild className="text-primary-foreground hover:bg-primary-foreground/10">
           <Link href="/login">Login</Link>
         </Button>
         <Button variant="outline" asChild className="border-accent text-accent hover:bg-accent hover:text-accent-foreground">
           <Link href="/register">Register</Link>
         </Button>
-      </>
+      </div>
     );
   }
 
-  const userInitial = user.displayName ? user.displayName.charAt(0).toUpperCase() : (user.email ? user.email.charAt(0).toUpperCase() : '');
+  const userInitial = userProfile?.displayName?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || 'U';
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-10 w-10 rounded-full p-0">
           <Avatar className="h-9 w-9">
-            <AvatarImage src={user.photoURL || undefined} alt={user.displayName || user.email || 'User'} />
+            <AvatarImage src={userProfile?.photoURL || user.photoURL || undefined} alt={userProfile?.displayName || user.email || 'User'} />
             <AvatarFallback>{userInitial}</AvatarFallback>
           </Avatar>
         </Button>
@@ -61,7 +64,7 @@ export function UserProfileButton() {
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col space-y-1">
             <p className="text-sm font-medium leading-none">
-              {user.displayName || 'User'}
+              {userProfile?.displayName || user.email}
             </p>
             <p className="text-xs leading-none text-muted-foreground">
               {user.email}
@@ -75,15 +78,14 @@ export function UserProfileButton() {
             <span>Settings</span>
           </Link>
         </DropdownMenuItem>
-        {/* Placeholder for admin link - this would check for user role */}
-        {/* {user.isAdmin && (
+        {isAdmin && (
           <DropdownMenuItem asChild>
             <Link href="/admin">
-              <ShieldCheck className="mr-2 h-4 w-4" />
+              <LayoutDashboard className="mr-2 h-4 w-4" />
               <span>Admin Panel</span>
             </Link>
           </DropdownMenuItem>
-        )} */}
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>
           <LogOut className="mr-2 h-4 w-4" />

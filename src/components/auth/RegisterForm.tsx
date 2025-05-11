@@ -13,6 +13,7 @@ import { Loader2, UserPlus } from 'lucide-react';
 import { createUserWithEmailAndPassword, sendEmailVerification, updateProfile } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
+import { createUserProfile } from '@/lib/firebase-data'; // Import function to create user profile
 
 const registrationSchema = z.object({
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(30, 'Display name too long.'),
@@ -38,29 +39,38 @@ export function RegistrationForm() {
 
   const onSubmit = async (data: RegistrationFormValues) => {
     setIsLoading(true);
+    if (!auth) {
+      toast({
+        title: 'Registration Failed',
+        description: "Authentication service is not available. Please try again later.",
+        variant: 'destructive',
+      });
+      setIsLoading(false);
+      return;
+    }
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       await updateProfile(userCredential.user, { displayName: data.displayName });
       
-      // Send email verification
-      // Ensure actionCodeSettings is configured if you want to redirect after verification
-      // const actionCodeSettings = {
-      //   url: `${window.location.origin}/login`, // URL to redirect to after email verification
-      //   handleCodeInApp: true,
-      // };
-      // await sendEmailVerification(userCredential.user, actionCodeSettings);
+      // Create user profile in Firestore
+      await createUserProfile(userCredential.user);
 
+      // Send email verification
       await sendEmailVerification(userCredential.user);
 
       toast({
         title: 'Registration Successful!',
         description: 'Please check your email to verify your account before logging in.',
       });
-      router.push('/login'); // Redirect to login page, or a page that says "check your email"
+      router.push('/login'); 
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
       if (error.code === 'auth/email-already-in-use') {
         errorMessage = 'This email address is already in use.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errorMessage = 'Email/password accounts are not enabled. Contact support.';
+      } else if (error.message.includes("Database not available")) {
+        errorMessage = "Could not save user profile. Please contact support.";
       }
       toast({
         title: 'Registration Failed',

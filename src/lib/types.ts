@@ -1,4 +1,6 @@
 
+export type ServerStatus = 'pending' | 'approved' | 'rejected';
+
 export interface Server {
   id: string;
   name: string;
@@ -13,9 +15,11 @@ export interface Server {
   maxPlayers: number;
   isOnline: boolean;
   votes: number;
-  submittedBy?: string; // Optional for now
-  submittedAt: string; // Store as ISO string for easier handling without Date objects in client components initially
-  lastVotedAt?: string; // Store as ISO string
+  submittedBy?: string; 
+  submittedAt: string; 
+  lastVotedAt?: string; 
+  status: ServerStatus; // Added for approval process
+  // promotedUntil?: string; // For PayPal integration: ISO string date
 }
 
 export interface Game {
@@ -24,3 +28,13 @@ export interface Game {
 }
 
 export type SortOption = 'votes' | 'playerCount' | 'name' | 'submittedAt';
+
+export interface UserProfile {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL?: string | null;
+  role?: 'user' | 'admin'; // User role
+  // lastLoginAt?: string;
+  // createdAt?: string;
+}

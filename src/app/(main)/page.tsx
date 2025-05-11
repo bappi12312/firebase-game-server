@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import type { Server, Game, SortOption } from '@/lib/types';
-import { getFirebaseServers, getFirebaseGames } from '@/lib/firebase-data'; // Updated import
+import { getFirebaseServers, getFirebaseGames } from '@/lib/firebase-data';
 import { ServerList } from '@/components/servers/ServerList';
 import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -24,12 +24,11 @@ export default function HomePage() {
     setIsLoading(true);
     setError(null);
     try {
-      // Fetch games first or in parallel
       const gamesData = await getFirebaseGames();
       setGames(gamesData);
 
-      // Then fetch servers with current filters
-      const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm);
+      // Fetch only 'approved' servers for the public list
+      const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
       setAllServers(serversData);
 
     } catch (err) {
@@ -43,18 +42,17 @@ export default function HomePage() {
 
   useEffect(() => {
     loadData();
-  }, [loadData]); // Rerun when loadData (and its dependencies) change
+  }, [loadData]);
 
 
-  // Client-side filtering and sorting are applied on the already fetched `allServers`
-  // If `getFirebaseServers` already handles all filtering/sorting, this `useMemo` might be simplified
-  // or only handle search if not done by backend.
-  // For now, `getFirebaseServers` implements basic filtering/sorting, and this will refine it or act as primary if backend is basic.
   const filteredAndSortedServers = useMemo(() => {
-    let servers = [...allServers]; // `allServers` is already filtered by `gameFilter` and `sortBy` from `loadData`
+    // Data is already filtered by game, sorted by chosen option, and is 'approved' from `loadData`
+    // Client-side search refinement can still happen if desired, though `getFirebaseServers` also handles it.
+    let servers = [...allServers];
     
-    // If search is not handled by `getFirebaseServers` or needs further client-side refinement:
-    if (searchTerm && !getFirebaseServers.toString().includes("searchTerm")) { // crude check if backend handles search
+    // This client-side search is mostly redundant if backend search in getFirebaseServers is comprehensive
+    // but can be kept for instant feedback on already loaded data subset.
+    if (searchTerm) {
       servers = servers.filter(
         (server) =>
           server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -62,8 +60,7 @@ export default function HomePage() {
           (server.tags && server.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
       );
     }
-    // Sorting is primarily handled by `getFirebaseServers`. If additional client-side sort is needed, add here.
-    // Example: If `getFirebaseServers` doesn't sort by player count for offline servers correctly.
+    // Re-sorting for player count, especially if offline servers need specific handling not fully covered by backend sort
     if (sortBy === 'playerCount') {
        servers.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
     }
@@ -98,7 +95,7 @@ export default function HomePage() {
           <ServerCrash className="h-5 w-5" />
           <AlertTitle>Error Loading Servers</AlertTitle>
           <AlertDescription>
-            {error}
+            {error} Please check your internet connection or try again later. If the problem persists, ensure Firebase is configured correctly.
           </AlertDescription>
         </Alert>
       </div>
