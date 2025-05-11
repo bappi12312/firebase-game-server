@@ -40,7 +40,7 @@ function formatFirebaseError(error: any, context: string): string {
   let message = `Error ${context}: `;
   if (error instanceof Error) {
     const firebaseErrorCode = (error as any).code;
-    if (firebaseErrorCode === 'permission-denied') {
+    if (firebaseErrorCode === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
       message += "Firestore permission denied. Please check your Firestore security rules to allow this operation.";
     } else if (firebaseErrorCode) {
       message += `Firebase Error (Code: ${firebaseErrorCode}): ${error.message}`;
@@ -50,8 +50,8 @@ function formatFirebaseError(error: any, context: string): string {
   } else {
     message += 'An unknown error occurred.';
   }
-  console.error(message, error);
-  return message;
+  console.error(message, error); // Keep console.error for server logs
+  return message; // Return the formatted message for UI display
 }
 
 // --- User Profile Functions ---
@@ -113,7 +113,8 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     return createdProfileForReturn;
 
   } catch (error: any) {
-     throw new Error(formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`));
+     const specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
+     throw new Error(specificMessage);
   }
 }
 
@@ -236,8 +237,7 @@ export async function getFirebaseServers(
 
     return serverList;
   } catch (error) {
-    console.error(formatFirebaseError(error, "fetching servers"));
-    return [];
+    throw new Error(formatFirebaseError(error, "fetching servers"));
   }
 }
 
@@ -262,22 +262,27 @@ export async function getFirebaseServerById(id: string): Promise<Server | null> 
       return null;
     }
   } catch (error) {
-    console.error(formatFirebaseError(error, `fetching server by ID (${id})`));
-    return null;
+    throw new Error(formatFirebaseError(error, `fetching server by ID (${id})`));
   }
 }
 
 export async function addFirebaseServer(
-  serverData: ServerDataForCreation 
+  serverDataInput: ServerDataForCreation 
 ): Promise<Server> {
    if (!db) {
     throw new Error(formatFirebaseError(null, "Database service not available for addFirebaseServer"));
   }
 
-  const initialStats = await fetchMockServerStats(serverData.ipAddress, serverData.port);
+  const initialStats = await fetchMockServerStats(serverDataInput.ipAddress, serverDataInput.port);
   
-  const newServerData = {
-    ...serverData, 
+  // Construct the object to be saved, ensuring no undefined fields are passed for optional ones
+  const dataToSave: { [key: string]: any } = {
+    name: serverDataInput.name,
+    ipAddress: serverDataInput.ipAddress,
+    port: serverDataInput.port,
+    game: serverDataInput.game,
+    description: serverDataInput.description,
+    tags: serverDataInput.tags && serverDataInput.tags.length > 0 ? serverDataInput.tags : [], // Store empty array if no tags
     votes: 0,
     submittedAt: serverTimestamp() as FieldValue,
     playerCount: initialStats.playerCount ?? 0,
@@ -285,10 +290,23 @@ export async function addFirebaseServer(
     isOnline: initialStats.isOnline ?? false, 
     status: 'pending' as ServerStatus,
     lastVotedAt: null, 
+    submittedBy: serverDataInput.submittedBy,
   };
+
+  if (serverDataInput.bannerUrl && serverDataInput.bannerUrl.trim() !== '') {
+    dataToSave.bannerUrl = serverDataInput.bannerUrl;
+  } else {
+    dataToSave.bannerUrl = null; // Explicitly set to null if empty or undefined
+  }
+
+  if (serverDataInput.logoUrl && serverDataInput.logoUrl.trim() !== '') {
+    dataToSave.logoUrl = serverDataInput.logoUrl;
+  } else {
+    dataToSave.logoUrl = null; // Explicitly set to null if empty or undefined
+  }
   
   try {
-    const docRef = await addDoc(collection(db, 'servers'), newServerData);
+    const docRef = await addDoc(collection(db, 'servers'), dataToSave);
     const newDocSnap = await getDoc(docRef); 
     const finalData = newDocSnap.data();
 
@@ -388,8 +406,7 @@ export async function updateFirebaseServerStatus(id: string, status: ServerStatu
     }
     return null;
   } catch (error) {
-    console.error(formatFirebaseError(error, `updating server status (${id} to ${status})`));
-    return null;
+    throw new Error(formatFirebaseError(error, `updating server status (${id} to ${status})`));
   }
 }
 
@@ -427,6 +444,7 @@ const staticGames: Game[] = [
 ];
 
 export async function getFirebaseGames(): Promise<Game[]> {
+  // In a real app, these might come from Firestore if they need to be dynamic
   return Promise.resolve([...staticGames]);
 }
 
@@ -448,8 +466,7 @@ export async function getAllFirebaseUsers(): Promise<UserProfile[]> {
         } as UserProfile
     });
   } catch (error) {
-    console.error(formatFirebaseError(error, "fetching all users"));
-    return [];
+    throw new Error(formatFirebaseError(error, "fetching all users"));
   }
 }
 
@@ -476,6 +493,7 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
     const userDocRef = doc(db, 'users', uid);
     batch.delete(userDocRef);
 
+    // Also delete user's votes subcollection if it exists
     const votesCollectionRef = collection(db, 'users', uid, 'votes');
     const votesSnapshot = await getDocs(votesCollectionRef);
     votesSnapshot.docs.forEach(voteDoc => batch.delete(voteDoc.ref));
@@ -488,6 +506,8 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
 
 
 export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
+    // Replace with actual Steam Query logic
+    // For now, using the mock function
     return fetchMockServerStats(ipAddress, port);
 }
 
@@ -505,8 +525,7 @@ export async function getServersCountByStatus(status?: ServerStatus | 'all'): Pr
     const snapshot = await getDocs(q);
     return snapshot.size;
   } catch (error) {
-    console.error(formatFirebaseError(error, `fetching servers count (status: ${status})`));
-    return 0;
+    throw new Error(formatFirebaseError(error, `fetching servers count (status: ${status})`));
   }
 }
 
@@ -519,11 +538,12 @@ export async function getUsersCount(): Promise<number> {
     const snapshot = await getDocs(collection(db, 'users'));
     return snapshot.size;
   } catch (error) {
-    console.error(formatFirebaseError(error, "fetching users count"));
-    return 0;
+    throw new Error(formatFirebaseError(error, "fetching users count"));
   }
 }
 
+// Function to update server stats in Firestore (could be triggered by a cron job or admin action)
+// This is a basic example; a real system might use cloud functions for periodic updates.
 export async function updateServerStatsInFirestore(serverId: string): Promise<void> {
   if (!db) {
     console.error("Firestore (db) is not initialized. Cannot update server stats.");
@@ -537,16 +557,18 @@ export async function updateServerStatsInFirestore(serverId: string): Promise<vo
     return;
   }
 
-  const serverData = serverSnap.data() as Server;
+  const serverData = serverSnap.data() as Server; // Assuming Server type is correct
   try {
     const liveStats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
     await updateDoc(serverRef, {
       isOnline: liveStats.isOnline,
       playerCount: liveStats.playerCount ?? 0,
-      maxPlayers: liveStats.maxPlayers ?? serverData.maxPlayers, 
+      maxPlayers: liveStats.maxPlayers ?? serverData.maxPlayers, // Keep existing if new one is undefined
     });
+    // console.log(`Stats updated for server ${serverId}`);
   } catch (error) {
     console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
+    // Optionally mark as offline on error
     await updateDoc(serverRef, {
       isOnline: false,
       playerCount: 0,
@@ -554,3 +576,20 @@ export async function updateServerStatsInFirestore(serverId: string): Promise<vo
   }
 }
 
+// Example of fetching servers and then updating their stats
+export async function fetchAndRefreshServerListings(
+  gameFilter: string = 'all', 
+  sortBy: string = 'votes', 
+  searchTerm: string = ''
+): Promise<Server[]> {
+  const servers = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
+  // In a real app, you might not want to update ALL servers on every list fetch.
+  // This is just an example. Consider batching or selective updates.
+  // for (const server of servers) {
+  //   await updateServerStatsInFirestore(server.id);
+  // }
+  // Refetch after updates if needed, or merge updates into the current list.
+  // For simplicity here, we'll just return the initially fetched list.
+  // The ServerCard component itself tries to fetch live stats.
+  return servers;
+}

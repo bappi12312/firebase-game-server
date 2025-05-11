@@ -10,11 +10,11 @@ import {
   deleteFirebaseServer as deleteFirebaseServerData,
   getUserProfile,
   updateFirebaseUserProfile,
-  type ServerDataForCreation // Import type for addFirebaseServer
+  type ServerDataForCreation
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile } from './types';
 import { auth } from './firebase'; 
-import { serverFormSchema } from '@/lib/schemas'; // Import from new location
+import { serverFormSchema } from '@/lib/schemas';
 
 // Helper to check for admin role
 async function isAdmin(userId: string | undefined): Promise<boolean> {
@@ -25,7 +25,7 @@ async function isAdmin(userId: string | undefined): Promise<boolean> {
 
 export interface SubmitServerFormState {
   message: string;
-  fields?: Record<string, string>;
+  fields?: Record<string, string | number>; // Allow number for port
   server?: Server;
   error?: boolean;
   errors?: { path: string; message: string }[];
@@ -35,27 +35,36 @@ export async function submitServerAction(
   prevState: SubmitServerFormState, 
   formData: FormData
 ): Promise<SubmitServerFormState> {
-  const rawFormData = Object.fromEntries(formData.entries()) as Record<string, string>;
+  const rawFormDataEntries = Object.fromEntries(formData.entries());
   const userId = formData.get('userId') as string | null;
 
   if (!userId) {
     return { 
       message: "User information not provided. You must be logged in to submit a server.", 
       error: true, 
-      fields: rawFormData
+      fields: rawFormDataEntries as Record<string, string> // Cast for simplicity, port will be string here
     };
   }
   
-  // Remove userId from rawFormData before parsing with serverFormSchema if it's not part of the schema
-  const parseableFormData = {...rawFormData};
-  delete parseableFormData.userId;
+  const rawFormDataForParsing = { ...rawFormDataEntries };
+  delete rawFormDataForParsing.userId; // Remove userId before parsing if it's not in schema
 
-  const parsed = serverFormSchema.safeParse(parseableFormData);
+  // Ensure port is a number for parsing if it exists as string from FormData
+  if (typeof rawFormDataForParsing.port === 'string') {
+    rawFormDataForParsing.port = parseInt(rawFormDataForParsing.port, 10);
+    if (isNaN(rawFormDataForParsing.port as number)) {
+        // Handle cases where port is not a valid number string, schema will also catch this
+        delete rawFormDataForParsing.port; 
+    }
+  }
+
+
+  const parsed = serverFormSchema.safeParse(rawFormDataForParsing);
 
   if (!parsed.success) {
     return {
       message: 'Invalid form data. Please check the fields.',
-      fields: rawFormData, 
+      fields: rawFormDataEntries as Record<string, string>, 
       error: true,
       errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
     };
@@ -67,11 +76,11 @@ export async function submitServerAction(
     const dataToSave: ServerDataForCreation = {
       name: parsed.data.name,
       ipAddress: parsed.data.ipAddress,
-      port: parsed.data.port, // Already a number due to z.coerce.number()
+      port: parsed.data.port, // Already a number from schema coercion
       game: parsed.data.game,
       description: parsed.data.description,
-      bannerUrl: parsed.data.bannerUrl || undefined,
-      logoUrl: parsed.data.logoUrl || undefined,
+      bannerUrl: (parsed.data.bannerUrl && parsed.data.bannerUrl.trim() !== '') ? parsed.data.bannerUrl : undefined,
+      logoUrl: (parsed.data.logoUrl && parsed.data.logoUrl.trim() !== '') ? parsed.data.logoUrl : undefined,
       tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
       submittedBy: submittedBy,
     };
@@ -86,7 +95,7 @@ export async function submitServerAction(
     console.error("Submission error in submitServerAction:", e);
     return {
       message: e.message || 'Failed to submit server. Please try again.',
-      fields: rawFormData,
+      fields: rawFormDataEntries as Record<string, string>,
       error: true,
     };
   }
@@ -173,7 +182,7 @@ export async function deleteServerAction(serverId: string, adminUserId?: string)
   }
 }
 
-const userProfileUpdateSchema = z.object({
+const userProfileUpdateSchemaAction = z.object({ // Renamed to avoid conflict with schema file
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.').optional(),
 });
 
@@ -198,7 +207,7 @@ export async function updateUserProfileAction(
   const parseableProfileData = {...rawFormData};
   delete parseableProfileData.userId;
 
-  const parsed = userProfileUpdateSchema.safeParse(parseableProfileData);
+  const parsed = userProfileUpdateSchemaAction.safeParse(parseableProfileData);
 
   if (!parsed.success) {
     return {
