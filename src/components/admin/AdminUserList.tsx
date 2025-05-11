@@ -21,7 +21,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { updateUserFirebaseRole, deleteFirebaseUserFirestoreData } from '@/lib/firebase-data'; // Direct call for client component
-import { revalidatePath } from 'next/cache'; // Not usable in client components directly
 
 
 async function handleRoleChange(uid: string, currentRole: 'user' | 'admin', newRole: 'user' | 'admin', toast: any, startTransition: any, setUsers: any) {
