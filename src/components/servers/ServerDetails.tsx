@@ -35,7 +35,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   }, [initialServerData]);
 
   useEffect(() => {
-    if (server.submittedAt) {
+    if (server.submittedAt && typeof server.submittedAt === 'string') { // Check if string before parsing
       try {
         setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
       } catch (e) {
@@ -91,7 +91,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   };
 
   const handleVote = async () => {
-     if (!user) {
+     if (!user?.uid) {
       toast({
         title: 'Login Required',
         description: 'You need to be logged in to vote.',
@@ -110,7 +110,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
     startVoteTransition(async () => {
       try {
-        const result = await voteAction(server.id);
+        const result = await voteAction(server.id, user.uid); // Pass user.uid
         if (result.success && result.newVotes !== undefined) {
           toast({
             title: 'Vote Cast!',
@@ -240,21 +240,21 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     <span>
                         <Button 
                         onClick={handleVote} 
-                        disabled={voteButtonDisabled && user !== null}
+                        disabled={voteButtonDisabled || !user?.uid } // Disable if authLoading or no user.uid
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
-                        aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
+                        aria-label={!user?.uid && !authLoading ? "Login to vote" : "Vote for this server"}
                         >
                         <ThumbsUp className="w-4 h-4 mr-2" />
-                        {authLoading ? <Loader2 className="animate-spin" /> : voteButtonText}
+                        {authLoading && !user?.uid ? <Loader2 className="animate-spin" /> : voteButtonText}
                         </Button>
                     </span>
                     </TooltipTrigger>
-                    {!user && !authLoading && (
+                    {!user?.uid && !authLoading && (
                     <TooltipContent>
                         <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
                     </TooltipContent>
                     )}
-                    {votedRecently && user && (
+                    {votedRecently && user?.uid && (
                     <TooltipContent>
                         <p>You've voted recently!</p>
                     </TooltipContent>

@@ -42,18 +42,16 @@ export async function submitServerAction(
     return { 
       message: "User information not provided. You must be logged in to submit a server.", 
       error: true, 
-      fields: rawFormDataEntries as Record<string, string> // Cast for simplicity, port will be string here
+      fields: rawFormDataEntries as Record<string, string> 
     };
   }
   
   const rawFormDataForParsing = { ...rawFormDataEntries };
-  delete rawFormDataForParsing.userId; // Remove userId before parsing if it's not in schema
+  delete rawFormDataForParsing.userId; 
 
-  // Ensure port is a number for parsing if it exists as string from FormData
   if (typeof rawFormDataForParsing.port === 'string') {
     rawFormDataForParsing.port = parseInt(rawFormDataForParsing.port, 10);
     if (isNaN(rawFormDataForParsing.port as number)) {
-        // Handle cases where port is not a valid number string, schema will also catch this
         delete rawFormDataForParsing.port; 
     }
   }
@@ -76,7 +74,7 @@ export async function submitServerAction(
     const dataToSave: ServerDataForCreation = {
       name: parsed.data.name,
       ipAddress: parsed.data.ipAddress,
-      port: parsed.data.port, // Already a number from schema coercion
+      port: parsed.data.port, 
       game: parsed.data.game,
       description: parsed.data.description,
       bannerUrl: (parsed.data.bannerUrl && parsed.data.bannerUrl.trim() !== '') ? parsed.data.bannerUrl : undefined,
@@ -90,6 +88,7 @@ export async function submitServerAction(
     revalidatePath('/'); 
     revalidatePath('/servers/submit'); 
     revalidatePath('/admin/servers'); 
+    revalidatePath('/dashboard');
     return { message: `Server "${newServer.name}" submitted successfully! It's now pending review.`, server: newServer, error: false };
   } catch (e: any) {
     console.error("Submission error in submitServerAction:", e);
@@ -102,7 +101,7 @@ export async function submitServerAction(
 }
 
 
-export async function voteAction(serverId: string): Promise<{ success: boolean; message: string; newVotes?: number, serverId?: string }> {
+export async function voteAction(serverId: string, userId: string | undefined): Promise<{ success: boolean; message: string; newVotes?: number, serverId?: string }> {
    if (!auth) {
     return { success: false, message: "Authentication service not available." };
   }
@@ -111,18 +110,17 @@ export async function voteAction(serverId: string): Promise<{ success: boolean; 
     return { success: false, message: 'Server ID is required.' };
   }
   
-  const currentUser = auth.currentUser; 
-  if (!currentUser) {
+  if (!userId) {
     return { success: false, message: "You must be logged in to vote." };
   }
 
-
   try {
-    const updatedServer = await voteForFirebaseServer(serverId, currentUser.uid);
+    const updatedServer = await voteForFirebaseServer(serverId, userId);
     if (updatedServer) {
       revalidatePath('/'); 
       revalidatePath(`/servers/${serverId}`); 
       revalidatePath('/admin/servers'); 
+      revalidatePath('/dashboard');
       return { success: true, message: `Voted for ${updatedServer.name}!`, newVotes: updatedServer.votes, serverId: serverId };
     }
     return { success: false, message: 'Server not found or unable to vote.' };
@@ -142,6 +140,7 @@ export async function approveServerAction(serverId: string, adminUserId?: string
       revalidatePath('/admin/servers');
       revalidatePath(`/servers/${serverId}`);
       revalidatePath('/');
+      revalidatePath('/dashboard');
       return { success: true, message: `Server "${server.name}" approved.` };
     }
     return { success: false, message: "Failed to approve server: not found." };
@@ -160,6 +159,7 @@ export async function rejectServerAction(serverId: string, adminUserId?: string)
       revalidatePath('/admin/servers');
       revalidatePath(`/servers/${serverId}`); 
       revalidatePath('/');
+      revalidatePath('/dashboard');
       return { success: true, message: `Server "${server.name}" rejected.` };
     }
     return { success: false, message: "Failed to reject server: not found." };
@@ -176,13 +176,14 @@ export async function deleteServerAction(serverId: string, adminUserId?: string)
     await deleteFirebaseServerData(serverId);
     revalidatePath('/admin/servers');
     revalidatePath('/'); 
+    revalidatePath('/dashboard');
     return { success: true, message: "Server deleted successfully." };
   } catch (error: any) {
     return { success: false, message: error.message || "Failed to delete server." };
   }
 }
 
-const userProfileUpdateSchemaAction = z.object({ // Renamed to avoid conflict with schema file
+const userProfileUpdateSchemaAction = z.object({ 
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.').optional(),
 });
 
@@ -228,6 +229,7 @@ export async function updateUserProfileAction(
   try {
     const updatedFields = await updateFirebaseUserProfile(userIdFromForm, updates);
     revalidatePath('/profile/settings');
+    revalidatePath('/dashboard');
     return { message: 'Profile updated successfully!', error: false, updatedProfile: updatedFields };
   } catch (e: any) {
     return {

@@ -34,30 +34,30 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   }, [initialServer]);
 
   const fetchStats = useCallback(async () => {
-    if (initialServer.status === 'approved' && initialServer.ipAddress && initialServer.port) {
+    if (serverData.status === 'approved' && serverData.ipAddress && serverData.port) {
       setIsLoadingStats(true);
       try {
-        const stats = await getServerOnlineStatus(initialServer.ipAddress, initialServer.port);
+        const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
         setServerData(prevServer => ({ ...prevServer, ...stats }));
         // Update Firestore with the new stats (fire-and-forget)
-        updateServerStatsInFirestore(initialServer.id, stats)
-          .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${initialServer.id}:`, err));
+        updateServerStatsInFirestore(serverData.id, stats)
+          .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
       } catch (error) {
-        console.error(`Failed to fetch server stats for card ${initialServer.name}:`, error);
+        console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
         setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0, maxPlayers: prevServer.maxPlayers || 0 }));
       } finally {
         setIsLoadingStats(false);
       }
-    } else if (initialServer.status !== 'approved') {
+    } else if (serverData.status !== 'approved') {
       setServerData(prevServer => ({ 
         ...prevServer, 
-        isOnline: initialServer.isOnline ?? false, 
-        playerCount: initialServer.playerCount ?? 0, 
-        maxPlayers: initialServer.maxPlayers ?? 0 
+        isOnline: prevServer.isOnline ?? false, 
+        playerCount: prevServer.playerCount ?? 0, 
+        maxPlayers: prevServer.maxPlayers ?? 0 
       }));
       setIsLoadingStats(false);
     }
-  }, [initialServer.id, initialServer.ipAddress, initialServer.port, initialServer.status, initialServer.name, initialServer.isOnline, initialServer.playerCount, initialServer.maxPlayers]);
+  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name]); // Removed initialServer dependency as we use serverData internal state
 
 
   useEffect(() => {
@@ -68,7 +68,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
 
 
   const handleVote = async () => {
-    if (!user) {
+    if (!user?.uid) {
       toast({
         title: 'Login Required',
         description: 'You need to be logged in to vote.',
@@ -82,7 +82,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
 
     startTransition(async () => {
       try {
-        const result = await voteAction(serverData.id);
+        const result = await voteAction(serverData.id, user.uid); // Pass user.uid
         if (result.success && result.newVotes !== undefined) {
           toast({
             title: 'Vote Cast!',
@@ -197,17 +197,17 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 </Button>
               </span>
             </TooltipTrigger>
-            {(!user && !authLoading) && (
+            {(!user?.uid && !authLoading) && (
               <TooltipContent>
                 <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
               </TooltipContent>
             )}
-             {votedRecently && user && (
+             {votedRecently && user?.uid && (
               <TooltipContent>
                 <p>You've voted recently for this server!</p>
               </TooltipContent>
             )}
-            {serverData.status !== 'approved' && user && (
+            {serverData.status !== 'approved' && user?.uid && (
                  <TooltipContent>
                     <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" />This server is not approved for voting.</p>
                 </TooltipContent>
