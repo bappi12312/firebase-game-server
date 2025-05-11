@@ -36,4 +36,10 @@ export interface UserProfile {
   photoURL?: string | null;
   role?: 'user' | 'admin'; 
   createdAt?: string | FieldValue; // Can be ISO string or ServerTimestamp
+  emailVerified?: boolean;
+}
+
+export interface VotedServerInfo {
+  server: Server;
+  votedAt: string; // ISO string date of the last vote by the user
 }

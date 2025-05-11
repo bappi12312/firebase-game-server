@@ -2,7 +2,7 @@
 'use client';
 
 import { signOut } from 'firebase/auth';
-import { LogOut, UserCircle, Settings, ShieldCheck, LayoutDashboard } from 'lucide-react';
+import { LogOut, UserCircle, Settings, ShieldCheck, LayoutDashboard, LineChart } from 'lucide-react';
 import Link from 'next/link';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import { auth } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 
 export function UserProfileButton() {
-  const { user, userProfile, isAdmin } = useAuth(); // useAuth now provides isAdmin
+  const { user, userProfile, isAdmin } = useAuth(); 
   const router = useRouter();
 
   const handleSignOut = async () => {
@@ -72,8 +72,16 @@ export function UserProfileButton() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {!isAdmin && (
+           <DropdownMenuItem asChild>
+            <Link href="/dashboard">
+              <LineChart className="mr-2 h-4 w-4" />
+              <span>My Dashboard</span>
+            </Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
-          <Link href="/profile/settings"> {/* Placeholder for profile settings page */}
+          <Link href="/profile/settings"> 
             <Settings className="mr-2 h-4 w-4" />
             <span>Settings</span>
           </Link>
@@ -95,3 +103,4 @@ export function UserProfileButton() {
     </DropdownMenu>
   );
 }
+
