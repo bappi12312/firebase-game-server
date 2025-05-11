@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useActionState } from 'react';
+import { useState, useActionState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -61,7 +61,7 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
     },
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (state?.message) {
       if (state.error) {
         toast({
