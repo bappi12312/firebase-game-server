@@ -48,7 +48,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   }, [server.submittedAt]);
 
   const fetchAndUpdateStats = useCallback(async () => {
-    if (server.status === 'approved' && server.ipAddress && server.port) {
+    if (server.id && server.status === 'approved' && server.ipAddress && server.port) {
         setIsLoadingStats(true);
         try {
             const stats = await getServerOnlineStatus(server.ipAddress, server.port);
@@ -66,7 +66,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         // For non-approved or servers without IP/Port, reflect current data or defaults
         setIsLoadingStats(false); 
     }
-  }, [server.id, server.ipAddress, server.port, server.status, server.name]); // server.name for logging, server.id for update call
+  }, [server.id, server.ipAddress, server.port, server.status, server.name]);
 
   useEffect(() => {
     fetchAndUpdateStats();
@@ -75,6 +75,14 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   }, [fetchAndUpdateStats]);
 
   const handleCopyIp = () => {
+    if (!server.ipAddress || !server.port) {
+      toast({
+        title: 'Error',
+        description: 'Server IP or Port is missing.',
+        variant: 'destructive',
+      });
+      return;
+    }
     navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
     toast({
       title: 'Copied to clipboard!',
@@ -93,6 +101,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       return;
     }
     if (votedRecently || isVotePending) return;
+    
+    if (!server.id) {
+      toast({ title: 'Error', description: 'Server ID is missing. Cannot vote.', variant: 'destructive' });
+      return;
+    }
     setVotedRecently(true);
 
     startVoteTransition(async () => {
@@ -133,7 +146,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         {server.bannerUrl ? (
           <Image
             src={server.bannerUrl}
-            alt={`${server.name} banner`}
+            alt={`${server.name || 'Server'} banner`}
             width={1200}
             height={300}
             className="w-full h-48 md:h-64 object-cover"
@@ -150,7 +163,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
            <div className="absolute top-4 left-4 bg-card/80 backdrop-blur-sm p-2 rounded-lg shadow-lg">
             <Image
                 src={server.logoUrl}
-                alt={`${server.name} logo`}
+                alt={`${server.name || 'Server'} logo`}
                 width={80}
                 height={80}
                 className="rounded-md"
@@ -162,14 +175,17 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       </CardHeader>
       <CardContent className="p-6 space-y-6">
         <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
-            <CardTitle className="text-3xl font-bold text-primary">{server.name}</CardTitle>
+            <CardTitle className="text-3xl font-bold text-primary">{server.name || 'Unnamed Server'}</CardTitle>
             <div className="flex items-center gap-2 flex-shrink-0">
-                <Button onClick={handleCopyIp} variant="outline" size="sm">
+                <Button onClick={handleCopyIp} variant="outline" size="sm" disabled={!server.ipAddress || !server.port}>
                     <ClipboardCopy className="w-4 h-4 mr-2" />
-                    {server.ipAddress}:{server.port}
+                    {server.ipAddress && server.port ? `${server.ipAddress}:${server.port}` : 'IP:Port N/A'}
                 </Button>
-                <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground">
-                    <a href={`steam://connect/${server.ipAddress}:${server.port}`} title="Connect via Steam (requires Steam client)">
+                <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
+                    <a 
+                      href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'} 
+                      title={server.ipAddress && server.port ? "Connect via Steam (requires Steam client)" : "Connection info missing"}
+                    >
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Connect
                     </a>
@@ -178,7 +194,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          <InfoCard Icon={Gamepad2} label="Game" value={server.game} />
+          <InfoCard Icon={Gamepad2} label="Game" value={server.game || 'N/A'} />
           <InfoCard 
             Icon={isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle)} 
             label="Status" 
@@ -188,19 +204,19 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
           <InfoCard 
             Icon={isLoadingStats ? Loader2 : Users} 
             label="Players" 
-            value={isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount} / ${server.maxPlayers}` : 'N/A')} 
+            value={isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount ?? 0} / ${server.maxPlayers ?? 0}` : 'N/A')} 
             iconClassName={isLoadingStats ? 'animate-spin text-muted-foreground' : 'text-accent'}
           />
-          <InfoCard Icon={ThumbsUp} label="Votes" value={String(server.votes)} />
+          <InfoCard Icon={ThumbsUp} label="Votes" value={String(server.votes ?? 0)} />
           <InfoCard Icon={Info} label="Added" value={timeAgo} />
           {server.status !== 'approved' && (
-            <InfoCard Icon={AlertCircle} label="Server Status" value={server.status.charAt(0).toUpperCase() + server.status.slice(1)} iconClassName={server.status === 'pending' ? 'text-yellow-500' : 'text-red-500'} />
+            <InfoCard Icon={AlertCircle} label="Server Status" value={server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown'} iconClassName={server.status === 'pending' ? 'text-yellow-500' : server.status === 'rejected' ? 'text-red-500' : 'text-muted-foreground'} />
           )}
         </div>
         
         <div>
           <h3 className="text-xl font-semibold mb-2 text-primary">Description</h3>
-          <p className="text-foreground/80 whitespace-pre-wrap">{server.description}</p>
+          <p className="text-foreground/80 whitespace-pre-wrap">{server.description || 'No description provided.'}</p>
         </div>
 
         {server.tags && server.tags.length > 0 && (
@@ -229,7 +245,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
                         >
                         <ThumbsUp className="w-4 h-4 mr-2" />
-                        {authLoading ? 'Loading...' : voteButtonText}
+                        {authLoading ? <Loader2 className="animate-spin" /> : voteButtonText}
                         </Button>
                     </span>
                     </TooltipTrigger>
