@@ -11,14 +11,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { submitServerAction, type SubmitServerFormState } from '@/lib/actions';
-import { serverFormSchema } from '@/lib/schemas'; // Updated import
+import { serverFormSchema } from '@/lib/schemas'; 
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, AlertCircle, UploadCloud } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
-import { useFormStatus } from 'react-dom';
+import { useRouter } from 'next/navigation';
 
 
 type ServerFormValues = z.infer<typeof serverFormSchema>;
@@ -27,20 +27,12 @@ interface ServerSubmissionFormProps {
   games: Game[];
 }
 
-function SubmitButtonContent() {
-  const { pending } = useFormStatus();
-  return (
-    <>
-      {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-      {pending ? 'Submitting...' : 'Submit Server'}
-    </>
-  );
-}
 
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth(); 
-  const [isTransitionPending, startTransition] = useTransition();
+  const [isSubmitting, startTransition] = useTransition();
+  const router = useRouter();
   
   const initialState: SubmitServerFormState = { message: '', error: false, fields: {} };
   const [state, formAction] = useActionState(submitServerAction, initialState);
@@ -86,7 +78,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
           title: 'Success!',
           description: state.message,
         });
-        form.reset({ // Reset with empty values or initial default values
+        form.reset({ 
           name: '',
           ipAddress: '',
           port: 25565,
@@ -96,9 +88,10 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
           logoUrl: '',
           tags: '',
         }); 
+        router.push('/dashboard'); // Redirect to dashboard on success
       }
     }
-  }, [state, toast, form]);
+  }, [state, toast, form, router]);
 
 
   const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -197,7 +190,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                     <FormItem>
                     <FormLabel>Port</FormLabel>
                     <FormControl>
-                        <Input type="number" placeholder="25565" {...field} />
+                        <Input type="number" placeholder="25565" {...field} onChange={e => field.onChange(parseInt(e.target.value,10) || 0)} />
                     </FormControl>
                     <FormMessage />
                     </FormItem>
@@ -291,8 +284,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={isTransitionPending || form.formState.isSubmitting}>
-                   <SubmitButtonContent />
+                        disabled={isSubmitting || form.formState.isSubmitting}>
+                   {isSubmitting || form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                   {isSubmitting || form.formState.isSubmitting ? 'Submitting...' : 'Submit Server'}
                 </Button>
             </div>
             </Form>

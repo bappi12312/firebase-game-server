@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useActionState, useEffect } from 'react';
+import { useState, useActionState, useEffect, useTransition } from 'react'; // Added useTransition
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -25,7 +25,7 @@ import { reportFormSchema } from '@/lib/schemas';
 import { reportServerAction, type ReportServerFormState } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { useFormStatus } from 'react-dom';
+
 
 interface ServerDetailsReportDialogProps {
   server: Server;
@@ -35,20 +35,11 @@ interface ServerDetailsReportDialogProps {
 
 type ReportFormValues = Zod.infer<typeof reportFormSchema>;
 
-function SubmitButton() {
-    const { pending } = useFormStatus();
-    return (
-        <Button type="submit" disabled={pending} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
-            {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-            {pending ? 'Submitting Report...' : 'Submit Report'}
-        </Button>
-    );
-}
-
-
 export function ServerDetailsReportDialog({ server, open, onOpenChange }: ServerDetailsReportDialogProps) {
   const { toast } = useToast();
   const { user, userProfile } = useAuth();
+  const [isSubmitting, startTransition] = useTransition();
+
 
   const initialState: ReportServerFormState = { message: '' };
   const [state, formAction] = useActionState(reportServerAction, initialState);
@@ -65,17 +56,17 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
     if (state?.message) {
       if (state.error) {
         toast({
-          title: 'Report Failed',
+          title: 'Report Submission Failed',
           description: state.message,
           variant: 'destructive',
         });
       } else {
         toast({
-          title: 'Report Submitted',
+          title: 'Report Submitted Successfully',
           description: state.message,
         });
         form.reset();
-        onOpenChange(false);
+        onOpenChange(false); // Close dialog on success
       }
     }
   }, [state, toast, form, onOpenChange]);
@@ -94,11 +85,18 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
     formData.append('reason', data.reason);
     formData.append('description', data.description);
     
-    formAction(formData);
+    startTransition(() => {
+        formAction(formData);
+    });
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(isOpen) => {
+        onOpenChange(isOpen);
+        if (!isOpen) {
+            form.reset(); // Reset form when dialog is closed
+        }
+    }}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle className="flex items-center text-xl">
@@ -125,9 +123,9 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {REPORT_REASONS.map((reason) => (
-                        <SelectItem key={reason} value={reason}>
-                          {reason}
+                      {REPORT_REASONS.map((reasonVal) => (
+                        <SelectItem key={reasonVal} value={reasonVal}>
+                          {reasonVal}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -155,11 +153,14 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
             />
             <DialogFooter className="pt-4">
               <DialogClose asChild>
-                <Button type="button" variant="outline">
+                <Button type="button" variant="outline" disabled={isSubmitting}>
                   Cancel
                 </Button>
               </DialogClose>
-              <SubmitButton />
+              <Button type="submit" disabled={isSubmitting} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground">
+                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                {isSubmitting ? 'Submitting Report...' : 'Submit Report'}
+             </Button>
             </DialogFooter>
           </form>
         </Form>
@@ -167,3 +168,4 @@ export function ServerDetailsReportDialog({ server, open, onOpenChange }: Server
     </Dialog>
   );
 }
+

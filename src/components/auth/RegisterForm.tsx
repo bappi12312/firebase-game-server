@@ -13,7 +13,7 @@ import { Loader2, UserPlus } from 'lucide-react';
 import { createUserWithEmailAndPassword, sendEmailVerification, updateProfile } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
-import { createUserProfile } from '@/lib/firebase-data'; // Import function to create user profile
+import { createUserProfile } from '@/lib/firebase-data'; 
 
 const registrationSchema = z.object({
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(30, 'Display name too long.'),
@@ -52,25 +52,32 @@ export function RegistrationForm() {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       await updateProfile(userCredential.user, { displayName: data.displayName });
       
-      // Create user profile in Firestore
       await createUserProfile(userCredential.user);
 
-      // Send email verification
-      await sendEmailVerification(userCredential.user);
-
-      toast({
-        title: 'Registration Successful!',
-        description: 'Please check your email to verify your account before logging in.',
-      });
+      try {
+        await sendEmailVerification(userCredential.user);
+        toast({
+          title: 'Registration Successful!',
+          description: 'Account created. Please check your email to verify your account before logging in.',
+        });
+      } catch (verificationError) {
+        console.error("Email verification error:", verificationError);
+        toast({
+          title: 'Registration Almost Complete!',
+          description: 'Account created, but failed to send verification email. You can try to verify later or contact support.',
+          variant: "default" 
+        });
+      }
+      
       router.push('/login'); 
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
       if (error.code === 'auth/email-already-in-use') {
-        errorMessage = 'This email address is already in use.';
+        errorMessage = 'This email address is already in use. Please try a different email or login.';
       } else if (error.code === 'auth/operation-not-allowed') {
         errorMessage = 'Email/password accounts are not enabled. Contact support.';
-      } else if (error.message.includes("Database not available")) {
-        errorMessage = "Could not save user profile. Please contact support.";
+      } else if (error.message && (error.message.includes("Could not save user profile") || error.message.includes("permission denied"))) {
+        errorMessage = `Registration failed: ${error.message}. Please try again or contact support if the issue persists.`;
       }
       toast({
         title: 'Registration Failed',
@@ -133,3 +140,4 @@ export function RegistrationForm() {
     </Form>
   );
 }
+

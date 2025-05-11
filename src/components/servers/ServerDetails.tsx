@@ -80,16 +80,16 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const handleCopyIp = () => {
     if (!server.ipAddress || !server.port) {
       toast({
-        title: 'Error',
-        description: 'Server IP or Port is missing.',
+        title: 'Error Copying IP',
+        description: 'Server IP address or Port is missing.',
         variant: 'destructive',
       });
       return;
     }
     navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
     toast({
-      title: 'Copied to clipboard!',
-      description: `${server.ipAddress}:${server.port}`,
+      title: 'IP Address Copied!',
+      description: `${server.ipAddress}:${server.port} copied to clipboard.`,
     });
   };
 
@@ -140,7 +140,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     setTimeout(() => setVotedRecently(false), 60000); 
   };
   
-  const voteButtonDisabled = isVotePending || votedRecently || authLoading;
+  const voteButtonDisabled = isVotePending || votedRecently || authLoading || !user?.uid;
   const voteButtonText = isVotePending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
 
   const isCurrentlyFeatured = server.isFeatured && server.featuredUntil && new Date(server.featuredUntil) > new Date();
@@ -163,7 +163,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             className="w-full h-48 md:h-64 object-cover"
             data-ai-hint="gameplay screenshot"
             priority
-            unoptimized={server.bannerUrl.startsWith('http://')}
+            unoptimized={server.bannerUrl.startsWith('http://') || !server.bannerUrl.startsWith('https://')}
           />
         ) : (
           <div className="w-full h-48 md:h-64 bg-secondary flex items-center justify-center" data-ai-hint="abstract design">
@@ -179,7 +179,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 height={80}
                 className="rounded-md"
                 data-ai-hint="server logo"
-                unoptimized={server.logoUrl.startsWith('http://')}
+                unoptimized={server.logoUrl.startsWith('http://') || !server.logoUrl.startsWith('https://')}
             />
            </div>
         )}
@@ -285,7 +285,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     <span>
                         <Button 
                         onClick={handleVote} 
-                        disabled={voteButtonDisabled || !user?.uid } 
+                        disabled={voteButtonDisabled} 
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
                         aria-label={!user?.uid && !authLoading ? "Login to vote" : "Vote for this server"}
                         >
@@ -334,3 +334,4 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
+

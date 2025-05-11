@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, LogIn } from 'lucide-react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { useRouter } from 'next/navigation'; // Use next/navigation for App Router
+import { useRouter, useSearchParams } from 'next/navigation'; 
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address.'),
@@ -24,6 +24,7 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 export function LoginForm() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<LoginFormValues>({
@@ -40,13 +41,18 @@ export function LoginForm() {
       await signInWithEmailAndPassword(auth, data.email, data.password);
       toast({
         title: 'Login Successful!',
-        description: 'Welcome back!',
+        description: 'Welcome back! You are now signed in.',
       });
-      router.push('/'); // Redirect to homepage or dashboard
+      const redirectUrl = searchParams.get('redirect') || '/dashboard'; // Redirect to dashboard or intended page
+      router.push(redirectUrl);
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        errorMessage = 'Invalid email or password.';
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.';
+      } else if (error.code === 'auth/user-disabled') {
+        errorMessage = 'This user account has been disabled.';
       }
       toast({
         title: 'Login Failed',
@@ -96,3 +102,4 @@ export function LoginForm() {
     </Form>
   );
 }
+
