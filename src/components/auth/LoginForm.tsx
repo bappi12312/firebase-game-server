@@ -53,24 +53,24 @@ export function LoginForm() {
         toast({
           title: 'Email Verification Required',
           description: 'Please verify your email address before logging in. Check your inbox for the verification link.',
-          variant: 'default', // Using default variant, could be 'destructive' if preferred to block login
+          variant: 'default', 
           duration: 7000,
         });
-        // Optionally, sign the user out if you want to strictly enforce verification before any access
+        // Forcing user to verify before proceeding
         // await signOut(auth); 
         // setIsLoading(false);
-        // return; // Prevent redirect if email is not verified
+        // router.push('/login?verificationPending=true'); // Optionally redirect to login with a param
+        // return; 
       } else {
         toast({
             title: 'Login Successful!',
             description: 'Welcome back! You are now signed in.',
-            variant: 'default', // explicit default variant
         });
       }
 
       const redirectUrl = searchParams.get('redirect') || '/dashboard'; 
       router.push(redirectUrl);
-      router.refresh(); // Force refresh to update auth state across components
+      // router.refresh(); // Removed: router.push should trigger necessary updates via AuthProvider
 
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
@@ -78,7 +78,7 @@ export function LoginForm() {
         switch (error.code) {
           case 'auth/user-not-found':
           case 'auth/wrong-password':
-          case 'auth/invalid-credential': // General invalid credential error for email/password
+          case 'auth/invalid-credential': 
             errorMessage = 'Invalid email or password. Please check your credentials and try again.';
             break;
           case 'auth/too-many-requests':

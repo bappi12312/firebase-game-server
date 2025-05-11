@@ -3,7 +3,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, ExternalLink, AlertCircle, Loader2, Star } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, ExternalLink, AlertCircle, Loader2, Star, Eye } from 'lucide-react';
 import type { Server } from '@/lib/types';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,8 +41,10 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
       try {
         const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
         setServerData(prevServer => ({ ...prevServer, ...stats }));
-        updateServerStatsInFirestore(serverData.id, stats)
-          .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
+        if (serverData.id) { // Ensure serverData.id is defined
+          updateServerStatsInFirestore(serverData.id, stats)
+            .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
+        }
       } catch (error) {
         console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
         setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0, maxPlayers: prevServer.maxPlayers || 0 }));
@@ -82,6 +84,11 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
     setVotedRecently(true); 
 
     startTransition(async () => {
+      if (!serverData.id) {
+        toast({ title: "Error", description: "Server ID missing, cannot vote.", variant: "destructive"});
+        setVotedRecently(false);
+        return;
+      }
       try {
         const result = await voteAction(serverData.id, user.uid); 
         if (result.success && result.newVotes !== undefined) {
@@ -121,21 +128,23 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   return (
     <Card className={cn("flex flex-col h-full overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 bg-card", (isCurrentlyFeatured || isIndefinitelyFeatured) && "border-2 border-yellow-400 ring-2 ring-yellow-400/50")}>
       <CardHeader className="p-0 relative">
-        {serverData.bannerUrl ? (
-          <Image
-            src={serverData.bannerUrl}
-            alt={`${serverData.name} banner`}
-            width={400}
-            height={150}
-            className="w-full h-36 object-cover"
-            data-ai-hint="game landscape"
-            unoptimized={serverData.bannerUrl.startsWith('http://')} 
-          />
-        ) : (
-          <div className="w-full h-36 bg-secondary flex items-center justify-center" data-ai-hint="abstract pattern">
-            <Gamepad2 className="w-16 h-16 text-muted-foreground" />
-          </div>
-        )}
+        <Link href={`/servers/${serverData.id}`} aria-label={`View details for ${serverData.name}`}>
+          {serverData.bannerUrl ? (
+            <Image
+              src={serverData.bannerUrl}
+              alt={`${serverData.name} banner`}
+              width={400}
+              height={150}
+              className="w-full h-36 object-cover hover:opacity-90 transition-opacity"
+              data-ai-hint="game landscape"
+              unoptimized={serverData.bannerUrl.startsWith('http://') || !serverData.bannerUrl.startsWith('https://')} 
+            />
+          ) : (
+            <div className="w-full h-36 bg-secondary flex items-center justify-center hover:opacity-90 transition-opacity" data-ai-hint="abstract pattern">
+              <Gamepad2 className="w-16 h-16 text-muted-foreground" />
+            </div>
+          )}
+        </Link>
         {serverData.logoUrl && (
            <div className="absolute top-2 left-2 bg-card/80 backdrop-blur-sm p-1 rounded-md shadow-md">
             <Image
@@ -145,7 +154,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 height={48}
                 className="rounded"
                 data-ai-hint="game icon"
-                unoptimized={serverData.logoUrl.startsWith('http://')}
+                unoptimized={serverData.logoUrl.startsWith('http://') || !serverData.logoUrl.startsWith('https://')}
             />
            </div>
         )}
@@ -195,44 +204,50 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             </p>
           )}
       </CardContent>
-      <CardFooter className="p-4 flex items-center justify-between border-t border-border/50 mt-auto">
+      <CardFooter className="p-4 flex items-center justify-between border-t border-border/50 mt-auto gap-2">
         <div className="flex items-center gap-1 text-accent">
           <ThumbsUp className="w-5 h-5" />
           <span className="font-semibold">{serverData.votes}</span>
         </div>
-        <TooltipProvider>
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <span> 
-                <Button 
-                  onClick={handleVote} 
-                  disabled={voteButtonDisabled || serverData.status !== 'approved'} 
-                  size="sm" 
-                  variant="outline" 
-                  className="border-accent text-accent hover:bg-accent hover:text-accent-foreground disabled:opacity-70 disabled:cursor-not-allowed"
-                  aria-label={!user && !authLoading ? "Login to vote" : (serverData.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
-                >
-                  {voteButtonText}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {(!user?.uid && !authLoading) && (
-              <TooltipContent>
-                <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
-              </TooltipContent>
-            )}
-             {votedRecently && user?.uid && (
-              <TooltipContent>
-                <p>You've voted recently for this server!</p>
-              </TooltipContent>
-            )}
-            {serverData.status !== 'approved' && user?.uid && (
-                 <TooltipContent>
-                    <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" />This server is not approved for voting.</p>
+        <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+                <Link href={`/servers/${serverData.id}`}>
+                    <Eye className="mr-2 h-4 w-4" /> View
+                </Link>
+            </Button>
+            <TooltipProvider>
+            <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                <span> 
+                    <Button 
+                    onClick={handleVote} 
+                    disabled={voteButtonDisabled || serverData.status !== 'approved'} 
+                    size="sm" 
+                    className="border-accent text-accent bg-transparent hover:bg-accent hover:text-accent-foreground disabled:opacity-70 disabled:cursor-not-allowed"
+                    aria-label={!user && !authLoading ? "Login to vote" : (serverData.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
+                    >
+                    {voteButtonText}
+                    </Button>
+                </span>
+                </TooltipTrigger>
+                {(!user?.uid && !authLoading) && (
+                <TooltipContent>
+                    <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
                 </TooltipContent>
-            )}
-          </Tooltip>
-        </TooltipProvider>
+                )}
+                {votedRecently && user?.uid && (
+                <TooltipContent>
+                    <p>You've voted recently for this server!</p>
+                </TooltipContent>
+                )}
+                {serverData.status !== 'approved' && user?.uid && (
+                    <TooltipContent>
+                        <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" />This server is not approved for voting.</p>
+                    </TooltipContent>
+                )}
+            </Tooltip>
+            </TooltipProvider>
+        </div>
       </CardFooter>
     </Card>
   );

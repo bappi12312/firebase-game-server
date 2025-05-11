@@ -6,7 +6,7 @@ import type { Server } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2, Star, CalendarClock, Flag } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2, Star, CalendarClock, Flag, ArrowLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect, useCallback } from 'react';
@@ -17,6 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
+import { useRouter } from 'next/navigation';
 
 interface ServerDetailsProps {
   server: Server;
@@ -25,6 +26,7 @@ interface ServerDetailsProps {
 export function ServerDetails({ server: initialServerData }: ServerDetailsProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   
   const [server, setServer] = useState(initialServerData);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
@@ -33,6 +35,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
   const [isFeatureDialogOpen, setIsFeatureDialogOpen] = useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
+  const [isIpCopied, setIsIpCopied] = useState(false);
 
 
   useEffect(() => {
@@ -58,8 +61,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         try {
             const stats = await getServerOnlineStatus(server.ipAddress, server.port);
             setServer(prevServer => ({ ...prevServer, ...stats }));
-            updateServerStatsInFirestore(server.id, stats)
-                .catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
+            if (server.id) { // Check id again as it's a dependency
+                updateServerStatsInFirestore(server.id, stats)
+                    .catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
+            }
         } catch (error) {
             console.error(`Failed to fetch server stats for ${server.name}:`, error);
             setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
@@ -92,8 +97,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         toast({
           title: 'IP Address Copied!',
           description: `${fullAddress} copied to your clipboard.`,
-          variant: 'default', 
         });
+        setIsIpCopied(true);
+        setTimeout(() => setIsIpCopied(false), 2000);
       })
       .catch(err => {
         toast({
@@ -162,7 +168,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     setServer(updatedServer); 
   };
   
-  const infoCards = [
+  const infoCardsData = [
     { key: 'game', Icon: Gamepad2, label: "Game", value: server.game || 'N/A' },
     { 
       key: 'status', 
@@ -183,7 +189,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   ];
 
   if (server.status !== 'approved') {
-    infoCards.push({ 
+    infoCardsData.push({ 
       key: 'serverStatus', 
       Icon: AlertCircle, 
       label: "Server Status", 
@@ -192,10 +198,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     });
   }
   if (isCurrentlyFeatured && server.featuredUntil) {
-    infoCards.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
+    infoCardsData.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
   }
   if (isIndefinitelyFeatured) {
-    infoCards.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
+    infoCardsData.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
   }
 
 
@@ -238,12 +244,18 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         )}
       </CardHeader>
       <CardContent className="p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            <Button onClick={() => router.back()} variant="outline" size="sm" className="self-start sm:self-center">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
+            </Button>
+        </div>
         <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
             <CardTitle className="text-3xl font-bold text-primary">{server.name || 'Unnamed Server'}</CardTitle>
             <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 <Button onClick={handleCopyIp} variant="outline" size="sm" disabled={!server.ipAddress || !server.port}>
-                    <ClipboardCopy className="w-4 h-4 mr-2" />
-                    {server.ipAddress && server.port ? `${server.ipAddress}:${server.port}` : 'IP:Port N/A'}
+                    {isIpCopied ? <Check className="w-4 h-4 mr-2 text-green-500" /> : <ClipboardCopy className="w-4 h-4 mr-2" />}
+                    {isIpCopied ? 'Copied!' : (server.ipAddress && server.port ? `${server.ipAddress}:${server.port}` : 'IP:Port N/A')}
                 </Button>
                 <TooltipProvider>
                   <Tooltip>
@@ -251,7 +263,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
                             <a 
                             href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'} 
-                            title={server.ipAddress && server.port ? "Connect via Steam" : "Connection info missing"}
+                            target="_blank" // Good practice for external protocols
+                            rel="noopener noreferrer" // Security for target="_blank"
+                            title={server.ipAddress && server.port ? "Connect via Steam (requires Steam client)" : "Connection info missing"}
+                            onClick={(e) => { if (!server.ipAddress || !server.port) e.preventDefault(); }} // Prevent navigation if disabled
                             >
                             <ExternalLink className="w-4 h-4 mr-2" />
                             Connect
@@ -259,7 +274,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                        <p>Connect directly to the server using Steam. Requires Steam client installed.</p>
+                        {server.ipAddress && server.port ? 
+                          <p>Connect directly to the server using Steam. Requires Steam client installed.</p> :
+                          <p>Server IP or Port missing, cannot generate Steam connect link.</p>
+                        }
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -272,7 +290,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          {infoCards.map(({ key, ...restOfCardProps }) => <InfoCard key={key} {...restOfCardProps} />)}
+          {infoCardsData.map(({ key, Icon, label, value, iconClassName }) => (
+            <InfoCard key={key} Icon={Icon} label={label} value={value} iconClassName={iconClassName} />
+          ))}
         </div>
         
         <div>
@@ -304,7 +324,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             >
               <Star className="w-5 h-5 mr-2 fill-current" /> Feature This Server
             </Button>
-            <FeatureServerDialog server={server} open={isFeatureDialogOpen} onOpenChange={setIsFeatureDialogOpen} onSuccess={handleFeatureSuccess} />
+            {server.id && <FeatureServerDialog server={server} open={isFeatureDialogOpen} onOpenChange={setIsFeatureDialogOpen} onSuccess={handleFeatureSuccess} />}
           </div>
         )}
 

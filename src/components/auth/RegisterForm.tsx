@@ -52,17 +52,24 @@ export function RegistrationForm() {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       await updateProfile(userCredential.user, { displayName: data.displayName });
       
-      await createUserProfile(userCredential.user);
+      await createUserProfile(userCredential.user); // This now returns a UserProfile
 
       try {
         await sendEmailVerification(userCredential.user);
-        // Toast will be shown on login page via query param
+        // Toast for registration success is handled on the login page via query param,
+        // but we can show a local one too if preferred.
+        toast({
+          title: 'Registration Successful!',
+          description: 'Please check your email to verify your account. Redirecting to login...',
+          duration: 5000,
+        });
       } catch (verificationError) {
         console.error("Email verification error:", verificationError);
-        toast({ // Show a toast here if verification email sending fails, but still redirect
+        toast({ 
           title: 'Registration Almost Complete!',
           description: 'Account created, but failed to send verification email. You can try to verify later or contact support.',
-          variant: "default" 
+          variant: "default",
+          duration: 7000,
         });
       }
       
@@ -73,8 +80,10 @@ export function RegistrationForm() {
         errorMessage = 'This email address is already in use. Please try a different email or login.';
       } else if (error.code === 'auth/operation-not-allowed') {
         errorMessage = 'Email/password accounts are not enabled. Contact support.';
-      } else if (error.message && error.message.includes("Could not save user profile") || (error.message && error.message.toLowerCase().includes('permission denied'))) {
+      } else if (error.message && (error.message.includes("Could not save user profile") || error.message.toLowerCase().includes('permission denied'))) {
         errorMessage = `Registration failed: ${error.message}. Please ensure Firestore rules allow user profile creation.`;
+      } else if (error.message) {
+        errorMessage = error.message;
       }
       toast({
         title: 'Registration Failed',

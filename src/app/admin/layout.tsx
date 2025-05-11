@@ -2,12 +2,11 @@
 'use client';
 
 import Link from 'next/link';
-import { redirect, usePathname } from 'next/navigation';
-import { Home, Users, Server, Settings, BarChart3, FileText, Activity } from 'lucide-react'; 
+import { redirect, usePathname, useRouter } from 'next/navigation';
+import { Home, Users, Server, Settings, BarChart3, FileText, Activity, ArrowLeft } from 'lucide-react'; 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
-// Removed global Header import
 import { Toaster } from "@/components/ui/toaster";
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -16,7 +15,6 @@ const adminNavLinks = [
   { href: '/admin/servers', label: 'Manage Servers', icon: Server },
   { href: '/admin/users', label: 'Manage Users', icon: Users },
   { href: '/admin/reports', label: 'Reports', icon: FileText },
-  // { href: '/admin/settings', label: 'Site Settings', icon: Settings }, 
 ];
 
 export default function AdminLayout({
@@ -25,12 +23,15 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, isAdmin, loading } = useAuth();
+
+  // Show back button if not on the main admin dashboard page
+  const showBackButton = pathname !== '/admin';
 
   if (loading) {
     return (
        <div className="flex flex-col min-h-screen bg-muted/40">
-        {/* No global Header here */}
         <header className="bg-primary text-primary-foreground shadow-md sticky top-0 z-50">
             <div className="container mx-auto px-4 py-3 flex items-center justify-between h-[60px]">
                  <Skeleton className="h-8 w-48" />
@@ -57,7 +58,6 @@ export default function AdminLayout({
 
   return (
     <div className="flex flex-col min-h-screen bg-muted/40">
-      {/* No global Header here, Admin has its own minimal header or structure */}
        <header className="bg-card text-card-foreground shadow-sm sticky top-0 z-40 border-b">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <Link href="/admin" className="text-2xl font-bold text-primary flex items-center">
@@ -90,6 +90,16 @@ export default function AdminLayout({
           </nav>
         </aside>
         <main className="flex-1 p-4 md:p-6 bg-card rounded-lg shadow-lg">
+          {showBackButton && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => router.back()} 
+              className="mb-4"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back
+            </Button>
+          )}
           {children}
         </main>
       </div>

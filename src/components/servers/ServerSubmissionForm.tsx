@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, useTransition } from 'react'; // Removed useActionState as we're not using form.action
+import { useEffect, useState, useTransition, useActionState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, Controller } from 'react-hook-form';
 import type { z } from 'zod';
@@ -31,19 +31,19 @@ interface ServerSubmissionFormProps {
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth(); 
-  const [isSubmittingManually, setIsSubmittingManually] = useState(false); // Renamed isPending
   const router = useRouter();
   
-  // const initialState: SubmitServerFormState = { message: '', error: false, fields: {} };
-  // const [state, formAction] = useActionState(submitServerAction, initialState); // Not using this if manually calling action
+  const initialState: SubmitServerFormState = { message: '', error: false };
+  const [state, formAction] = useActionState(submitServerAction, initialState);
+  const [isPending, startTransition] = useTransition();
 
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
-    defaultValues: { // Set initial default values
+    defaultValues: { 
       name: '',
       ipAddress: '',
-      port: 25565, // Default port
+      port: 25565, 
       game: '',
       description: '',
       bannerUrl: '',
@@ -52,9 +52,33 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     },
   });
 
-  // No useEffect for state from useActionState if not used directly with form.action
+ useEffect(() => {
+    if (state?.message) {
+      if (state.error) {
+        toast({
+          title: 'Submission Failed',
+          description: state.message || 'Please check the form for errors.',
+          variant: 'destructive',
+        });
+        if (state.errors) {
+          state.errors.forEach(err => {
+            if (err.path) { // Check if err.path exists
+                 form.setError(err.path as keyof ServerFormValues, { message: err.message });
+            }
+          });
+        }
+      } else {
+        toast({
+          title: 'Success!',
+          description: state.message || 'Server submitted for review.',
+        });
+        form.reset(); 
+        router.push('/dashboard'); 
+      }
+    }
+  }, [state, toast, form, router]);
 
-  const handleFormSubmit = async (data: ServerFormValues) => { // data is now the validated form data
+  const handleFormSubmit = (data: ServerFormValues) => {
     if (!user?.uid) {
       toast({
         title: "Authentication Error",
@@ -63,8 +87,6 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       });
       return;
     }
-
-    setIsSubmittingManually(true);
     
     const formData = new FormData();
     Object.entries(data).forEach(([key, value]) => {
@@ -74,31 +96,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     });
     formData.append('userId', user.uid);
 
-    // Manually call the server action
-    const result = await submitServerAction({ message: '', error: false }, formData); // Pass an initial state or null
-
-    setIsSubmittingManually(false);
-
-    if (result.error) {
-      toast({
-        title: 'Submission Failed',
-        description: result.message || 'Please check the form for errors.',
-        variant: 'destructive',
-      });
-      if (result.errors) {
-        result.errors.forEach(err => {
-          form.setError(err.path as keyof ServerFormValues, { message: err.message });
-        });
-      }
-    } else {
-      toast({
-        title: 'Success!',
-        description: result.message || 'Server submitted for review.',
-        variant: 'default',
-      });
-      form.reset(); 
-      router.push('/dashboard'); 
-    }
+    startTransition(() => {
+        formAction(formData);
+    });
   };
 
   if (authLoading) {
@@ -144,7 +144,6 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       </CardHeader>
       <CardContent>
          <Form {...form}>
-          {/* Use react-hook-form's handleSubmit to trigger our custom submit handler */}
           <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
             <FormField
               control={form.control}
@@ -193,14 +192,13 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Game</FormLabel>
-                  {/* Controller is fine here for integrating with RHF's state for non-standard inputs */}
                   <Controller
                     name="game"
                     control={form.control}
-                    render={({ field: controllerField }) => ( // controllerField provides onChange, onBlur, value, name, ref
+                    render={({ field: controllerField }) => ( 
                         <Select 
                             onValueChange={controllerField.onChange} 
-                            value={controllerField.value} // Use value from controllerField
+                            value={controllerField.value} 
                             name={controllerField.name}
                         >
                             <FormControl>
@@ -279,9 +277,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={isSubmittingManually || form.formState.isSubmitting}>
-                   {(isSubmittingManually || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-                   {(isSubmittingManually || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
+                        disabled={isPending || form.formState.isSubmitting}>
+                   {(isPending || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                   {(isPending || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
                 </Button>
             </div>
             </form>
