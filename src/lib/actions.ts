@@ -8,17 +8,15 @@ import {
   voteForFirebaseServer,
   updateFirebaseServerStatus,
   deleteFirebaseServer as deleteFirebaseServerData,
-  getUserProfile
+  getUserProfile,
+  updateFirebaseUserProfile // Import new function
 } from './firebase-data';
-import type { Server, ServerStatus } from './types';
+import type { Server, ServerStatus, UserProfile } from './types';
 import { auth } from './firebase'; // Import auth for checking user status
 
 // Helper to check for admin role
 async function isAdmin(userId: string | undefined): Promise<boolean> {
   if (!userId) return false;
-  // In a real app, use Firebase Admin SDK with custom claims or check a 'roles' collection.
-  // For now, we can check against an environment variable or a hardcoded UID for simplicity.
-  // Or, fetch user profile and check role.
   if (!auth) return false; // Firebase not initialized
   const userProfile = await getUserProfile(userId);
   return userProfile?.role === 'admin';
@@ -49,11 +47,6 @@ export async function submitServerAction(
    if (!auth) {
     return { message: "Authentication service not available.", error: true };
   }
-  // This is a simplified check. For Server Actions, proper session management is key.
-  // Firebase client-side auth state (auth.currentUser) isn't directly available here securely.
-  // A robust solution would pass an ID token or use a server-side session.
-  // For now, we assume if this action is callable, client-side checks passed.
-  // The `addFirebaseServer` function itself should re-check `auth.currentUser` if possible or rely on security rules.
   
   const rawFormData = Object.fromEntries(formData.entries());
   const parsed = serverSchema.safeParse(rawFormData);
@@ -75,7 +68,7 @@ export async function submitServerAction(
       logoUrl: parsed.data.logoUrl || undefined,
     };
     
-    const newServer = await addFirebaseServer(dataToSave); // This now sets status to 'pending'
+    const newServer = await addFirebaseServer(dataToSave);
     
     revalidatePath('/');
     revalidatePath('/servers/submit'); 
@@ -98,10 +91,6 @@ export async function voteAction(serverId: string): Promise<{ success: boolean; 
    if (!auth) {
     return { success: false, message: "Authentication service not available." };
   }
-  // const currentUser = auth.currentUser; // Check inside voteForFirebaseServer or rely on rules
-  // if (!currentUser) {
-  //   return { success: false, message: 'You must be logged in to vote.' };
-  // }
 
   if (!serverId) {
     return { success: false, message: 'Server ID is required.' };
@@ -163,5 +152,47 @@ export async function deleteServerAction(serverId: string, currentUserId?: strin
     return { success: true, message: 'Server deleted.' };
   } catch (error: any) {
     return { success: false, message: error.message || 'Failed to delete server.' };
+  }
+}
+
+// --- User Profile Actions ---
+const userProfileUpdateSchema = z.object({
+  displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name too long.'),
+});
+
+export interface UpdateUserProfileFormState {
+  message: string;
+  error?: boolean;
+  updatedProfile?: Partial<UserProfile>;
+}
+
+export async function updateUserProfileAction(
+  prevState: UpdateUserProfileFormState,
+  formData: FormData
+): Promise<UpdateUserProfileFormState> {
+  if (!auth || !auth.currentUser) {
+    return { message: 'You must be logged in to update your profile.', error: true };
+  }
+
+  const rawFormData = {
+    displayName: formData.get('displayName'),
+  };
+  
+  const parsed = userProfileUpdateSchema.safeParse(rawFormData);
+
+  if (!parsed.success) {
+    return {
+      message: 'Invalid data. ' + parsed.error.errors.map(e => e.message).join(' '),
+      error: true,
+    };
+  }
+
+  try {
+    const updatedData = await updateFirebaseUserProfile(auth.currentUser.uid, { displayName: parsed.data.displayName });
+    revalidatePath('/profile/settings');
+    // Consider revalidating other paths where display name might be shown, or rely on client-side context update
+    return { message: 'Profile updated successfully!', updatedProfile: updatedData, error: false };
+  } catch (e: any) {
+    return { message: e.message || 'Failed to update profile.', error: true };
   }
 }
