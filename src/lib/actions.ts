@@ -1,4 +1,3 @@
-
 'use server';
 
 import { z } from 'zod';
@@ -16,10 +15,9 @@ import {
   type ServerDataForCreation
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
-import { auth } from './firebase'; // Removed storage import as it's not used here anymore
-// Firebase Storage functions (ref, uploadBytes, getDownloadURL) are removed as uploads are client-side
+import { auth } from './firebase';
 import { serverFormSchema, reportFormSchema, userProfileUpdateSchema } from '@/lib/schemas';
-// uuidv4 removed as it's not used here anymore
+
 
 // Helper to check for admin role
 async function isAdmin(userId: string): Promise<boolean> {
@@ -27,15 +25,14 @@ async function isAdmin(userId: string): Promise<boolean> {
   return profile?.role === 'admin';
 }
 
-// uploadFileToStorage function removed as uploads are now client-side
-
 
 export interface SubmitServerFormState {
   message: string;
   fields?: Record<string, string | number | File | null>; 
-  server?: Server;
+  server?: Server; 
+  serverId?: string | null; 
   error?: boolean;
-  errors?: { path: string; message: string }[];
+  errors?: { path: string | (string|number)[]; message: string }[];
 }
 
 export async function submitServerAction(
@@ -49,22 +46,24 @@ export async function submitServerAction(
     return { 
       message: "User information not provided. You must be logged in to submit a server.", 
       error: true, 
-      fields: rawFormDataEntries as Record<string, string | File> 
+      fields: rawFormDataEntries as Record<string, string | File>, // Type assertion might be too broad
+      serverId: null,
     };
   }
   
+  // Prepare data for Zod parsing, excluding userId
   const zodParseData: Record<string, any> = {};
   for (const key in rawFormDataEntries) {
-    if (key !== 'userId') { // Exclude userId as it's handled separately
+    if (key !== 'userId') { 
       zodParseData[key] = rawFormDataEntries[key];
     }
   }
 
+  // Explicitly parse port to number for Zod
   if (typeof zodParseData.port === 'string') {
-    zodParseData.port = parseInt(zodParseData.port, 10);
-    if (isNaN(zodParseData.port as number)) {
-        delete zodParseData.port; 
-    }
+    const parsedPort = parseInt(zodParseData.port, 10);
+    // Zod will handle NaN or if it's not a valid number / missing
+    zodParseData.port = isNaN(parsedPort) ? undefined : parsedPort; 
   }
   
   const parsed = serverFormSchema.safeParse(zodParseData);
@@ -74,12 +73,13 @@ export async function submitServerAction(
       message: 'Invalid form data. Please check the fields.',
       fields: rawFormDataEntries as Record<string, string | File>, 
       error: true,
-      errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
+      errors: parsed.error.errors.map(err => ({ path: err.path, message: err.message })),
+      serverId: null,
     };
   }
   
   const submittedBy = userId;
-  // URLs now come directly from parsed data, assuming client-side upload.
+  // Use parsed data which now has correct types (empty string for optional URLs if not provided)
   const bannerDownloadURL = parsed.data.bannerUrl || undefined;
   const logoDownloadURL = parsed.data.logoUrl || undefined;
 
@@ -90,8 +90,8 @@ export async function submitServerAction(
       port: parsed.data.port, 
       game: parsed.data.game,
       description: parsed.data.description,
-      bannerUrl: (bannerDownloadURL && bannerDownloadURL.trim() !== '') ? bannerDownloadURL : undefined,
-      logoUrl: (logoDownloadURL && logoDownloadURL.trim() !== '') ? logoDownloadURL : undefined,
+      bannerUrl: bannerDownloadURL, // Already string or undefined
+      logoUrl: logoDownloadURL,   // Already string or undefined
       tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
       submittedBy: submittedBy,
     };
@@ -102,21 +102,27 @@ export async function submitServerAction(
     revalidatePath('/servers/submit'); 
     revalidatePath('/admin/servers'); 
     revalidatePath('/dashboard');
-    return { message: `Server "${newServer.name}" submitted successfully! It's now pending review.`, server: newServer, error: false };
+    return { 
+        message: `Server "${newServer.name}" submitted successfully! It's now pending review.`, 
+        serverId: newServer.id,
+        error: false 
+    };
   } catch (e: any) {
-    console.error("Submission error in submitServerAction:", e);
+    console.error("[actions.ts] Submission error in submitServerAction:", e);
     return {
       message: e.message || 'Failed to submit server. Please try again.',
       fields: rawFormDataEntries as Record<string, string | File>,
       error: true,
+      serverId: null,
     };
   }
 }
 
 
-export async function voteAction(serverId: string, userId: string | undefined): Promise<{ success: boolean; message: string; newVotes?: number, serverId?: string }> {
+export async function voteAction(serverId: string, userId: string | undefined): Promise<{ success: boolean; message: string; newVotes?: number; serverId?: string }> {
    if (!auth) {
-    return { success: false, message: "Authentication service not available." };
+    console.warn("[actions.ts] voteAction: Firebase Auth is not initialized.");
+    return { success: false, message: "Authentication service not available. Please try again later." };
   }
 
   if (!serverId) {
@@ -133,12 +139,12 @@ export async function voteAction(serverId: string, userId: string | undefined): 
       revalidatePath('/'); 
       revalidatePath(`/servers/${serverId}`); 
       revalidatePath('/admin/servers'); 
-      revalidatePath('/dashboard');
+      revalidatePath('/dashboard'); 
       return { success: true, message: `Voted for ${updatedServer.name}!`, newVotes: updatedServer.votes, serverId: serverId };
     }
     return { success: false, message: 'Server not found or unable to vote.' };
   } catch (error: any) {
-    console.error("Error in voteAction:", error);
+    console.error("[actions.ts] Error in voteAction:", error);
     return { success: false, message: error.message || "An unexpected error occurred during voting." };
   }
 }
@@ -214,8 +220,9 @@ export async function updateUserProfileAction(
   }
 
   const rawFormData = Object.fromEntries(formData.entries());
+  // Ensure userId is not part of Zod parsing
   const parseableProfileData = {...rawFormData};
-  delete parseableProfileData.userId;
+  delete parseableProfileData.userId; 
 
   const parsed = userProfileUpdateSchema.safeParse(parseableProfileData);
 
@@ -230,15 +237,18 @@ export async function updateUserProfileAction(
   if (parsed.data.displayName) {
     updates.displayName = parsed.data.displayName;
   }
+  // Add photoURL update if it's part of the form and schema in future
+  // if (parsed.data.photoURL) { updates.photoURL = parsed.data.photoURL; }
+
 
   if (Object.keys(updates).length === 0) {
-     return { message: "No changes to save.", error: false };
+     return { message: "No changes to save.", error: false }; 
   }
 
   try {
     const updatedFields = await updateFirebaseUserProfile(userIdFromForm, updates);
     revalidatePath('/profile/settings');
-    revalidatePath('/dashboard');
+    revalidatePath('/dashboard'); 
     return { message: 'Profile updated successfully!', error: false, updatedProfile: updatedFields };
   } catch (e: any) {
     return {
@@ -259,10 +269,11 @@ export async function featureServerAction(
     return { success: false, message: "User ID not provided for feature request." };
   }
   
-  // For self-serve, user doesn't need to be admin if they are featuring their own server
-  // The updateServerFeaturedStatus logic should ideally handle permission if it's not an admin action.
-  // For now, assuming if a user is making this call, they have permission (e.g., via UI flow for their own server).
-  // A more robust check might involve verifying server ownership (submittedBy field).
+  const profile = await getUserProfile(requestingUserId);
+  if (!profile) {
+    return { success: false, message: "Requesting user profile not found." };
+  }
+
 
   try {
     const server = await updateServerFeaturedStatus(serverId, true, durationDays);
@@ -291,7 +302,7 @@ export async function unfeatureServerAction(
     return { success: false, message: "Unauthorized: Admin role required to unfeature." };
   }
   try {
-    const server = await updateServerFeaturedStatus(serverId, false);
+    const server = await updateServerFeaturedStatus(serverId, false); 
     if (server) {
       revalidatePath("/admin/servers");
       revalidatePath(`/servers/${serverId}`);
@@ -312,7 +323,7 @@ export async function unfeatureServerAction(
 export interface ReportServerFormState {
   message: string;
   error?: boolean;
-  errors?: { path: string; message: string }[];
+  errors?: { path: string | (string|number)[]; message: string }[];
 }
 
 export async function reportServerAction(
@@ -337,16 +348,16 @@ export async function reportServerAction(
     return {
       message: "Invalid report data.",
       error: true,
-      errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
+      errors: parsed.error.errors.map(err => ({ path: err.path, message: err.message })),
     };
   }
 
   try {
-    const reportData: Omit<Report, 'id' | 'reportedAt' | 'status'> = {
+    const reportData: Omit<Report, 'id' | 'reportedAt' | 'status' | 'resolvedAt' | 'resolvedBy' | 'adminNotes'> = {
       serverId,
       serverName,
       reportingUserId,
-      reportingUserDisplayName: reportingUserDisplayName || 'Anonymous',
+      reportingUserDisplayName: reportingUserDisplayName || 'Unknown User', 
       reason: parsed.data.reason,
       description: parsed.data.description,
     };
@@ -365,7 +376,7 @@ export async function resolveReportAction(
   newStatus: ReportStatus,
   adminNotes?: string
 ): Promise<{ success: boolean; message: string; report?: Report }> {
-  if (!await isAdmin(adminUserId)) {
+  if (!adminUserId || !await isAdmin(adminUserId)) { 
     return { success: false, message: "Unauthorized: Admin role required." };
   }
 
@@ -380,4 +391,3 @@ export async function resolveReportAction(
     return { success: false, message: error.message || "Failed to update report status." };
   }
 }
-

@@ -38,7 +38,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { user, loading: authLoading } = useAuth(); 
   const router = useRouter();
   
-  const initialState: SubmitServerFormState = { message: '', error: false };
+  const initialState: SubmitServerFormState = { message: '', error: false, serverId: null };
   const [currentFormActionState, formAction] = useActionState(submitServerAction, initialState);
   const [isSubmittingForm, startSubmitTransition] = useTransition();
 
@@ -68,38 +68,77 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     setIsUploadingState: React.Dispatch<React.SetStateAction<boolean>>,
     formFieldName: 'bannerUrl' | 'logoUrl'
   ) => {
-    if (!user || !storage) {
-      toast({ title: "Error", description: "Cannot upload file. User not authenticated or storage not available.", variant: "destructive" });
+    console.log(`[Upload] Initiating ${type} upload. File: ${file.name}, Size: ${file.size} bytes`);
+    if (!user) {
+      toast({ title: "Authentication Error", description: "You must be logged in to upload files.", variant: "destructive" });
+      setIsUploadingState(false);
       return;
     }
+    if (!storage) {
+        toast({ title: "Storage Error", description: "Firebase Storage is not available. Cannot upload file.", variant: "destructive" });
+        setIsUploadingState(false);
+        return;
+    }
+
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      toast({ title: "File too large", description: `Max file size is ${MAX_FILE_SIZE_MB}MB.`, variant: "destructive"});
+      toast({ title: "File too large", description: `Max file size is ${MAX_FILE_SIZE_MB}MB. Your file is ${(file.size / (1024*1024)).toFixed(2)}MB.`, variant: "destructive"});
+      setIsUploadingState(false);
       return;
     }
     if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      toast({ title: "Invalid file type", description: "Only JPG, PNG, WEBP, GIF are allowed.", variant: "destructive"});
+      toast({ title: "Invalid file type", description: `File type "${file.type}" is not supported. Only JPG, PNG, WEBP, GIF are allowed.`, variant: "destructive"});
+      setIsUploadingState(false);
       return;
     }
 
+    console.log(`[Upload] Starting ${type}. Setting isUploadingState to true.`);
     setIsUploadingState(true);
-    setPreviewState(URL.createObjectURL(file)); 
+    const objectURL = URL.createObjectURL(file);
+    setPreviewState(objectURL); 
 
     try {
-      const fileExtension = file.name.split('.').pop();
+      const fileExtension = file.name.split('.').pop() || 'bin';
       const uniqueFileName = `${type}-${user.uid}-${uuidv4()}.${fileExtension}`;
-      const storageRef = ref(storage, `server_assets/${user.uid}/${uniqueFileName}`);
+      const filePath = `server_assets/${user.uid}/${uniqueFileName}`;
       
+      console.log(`[Upload] Uploading ${type} to Firebase Storage path: ${filePath}`);
+      const storageRef = ref(storage, filePath);
       const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
+      console.log(`[Upload] ${type} uploaded to Firebase Storage successfully. Path: ${snapshot.metadata.fullPath}`);
       
-      form.setValue(formFieldName, downloadURL);
-      toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} Uploaded Successfully`, description: "URL set for submission." });
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      console.log(`[Upload] Success for ${type}. URL: ${downloadURL}. isUploadingState should become false soon (in finally).`);
+      
+      form.setValue(formFieldName, downloadURL, { shouldValidate: true });
+      toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} Uploaded`, description: "Image ready for submission." });
     } catch (error: any) {
-      console.error(`Error uploading ${type} file:`, error);
-      toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: error.message || "Please try again.", variant: "destructive" });
-      form.setValue(formFieldName, ''); 
+      let errorMessage = "An unknown error occurred during upload.";
+      if (error.code) { 
+        console.error(`[Upload] Firebase Upload Error for ${type} (code: ${error.code}):`, error.message, error);
+        errorMessage = `Firebase Error (${error.code}): ${error.message}`;
+        if (error.code === 'storage/unauthorized') {
+          errorMessage = "Upload failed: You are not authorized to upload files. Please check Firebase Storage rules.";
+        } else if (error.code === 'storage/canceled') {
+          errorMessage = "Upload canceled.";
+        } else if (error.code === 'storage/unknown') {
+          errorMessage = "An unknown storage error occurred. Check your network and Firebase setup.";
+        } else if (error.code === 'storage/quota-exceeded') {
+            errorMessage = "Storage quota exceeded. Cannot upload file.";
+        }
+      } else {
+        console.error(`[Upload] Generic Upload Error for ${type}:`, error.message, error);
+        errorMessage = error.message || "An unknown error occurred during upload.";
+      }
+      console.error(`[Upload] Error for ${type}. isUploadingState should become false soon (in finally). Error details:`, errorMessage);
+      toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: errorMessage, variant: "destructive" });
+      form.setValue(formFieldName, '', { shouldValidate: true }); 
       setPreviewState(null); 
+      if (objectURL) {
+        console.log(`[Upload] Revoking objectURL for ${type} due to error: ${objectURL}`);
+        URL.revokeObjectURL(objectURL);
+      }
     } finally {
+      console.log(`[Upload] Finally for ${type}. Setting isUploadingState to false.`);
       setIsUploadingState(false);
     }
   };
@@ -114,10 +153,18 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       });
       return;
     }
+    if (isUploadingBanner || isUploadingLogo) {
+        toast({
+            title: "Upload in Progress",
+            description: "Please wait for image uploads to complete before submitting.",
+            variant: "default"
+        });
+        return;
+    }
     
     const formData = new FormData();
     Object.entries(data).forEach(([key, value]) => {
-       if (value !== undefined && value !== null) { 
+       if (value !== undefined && value !== null && value !== '') { 
         formData.append(key, String(value)); 
       }
     });
@@ -138,25 +185,37 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         });
         if (currentFormActionState.errors) {
           currentFormActionState.errors.forEach(err => {
-            if (err.path) {
+            if (err.path && typeof err.path === 'string') { 
               form.setError(err.path as keyof ServerFormValues, { message: err.message });
+            } else if (err.path && Array.isArray(err.path)) {
+              form.setError(err.path.join('.') as keyof ServerFormValues, { message: err.message });
             }
           });
         }
       } else {
         toast({
-          title: 'Success!',
+          title: 'Submission Successful!',
           description: currentFormActionState.message || 'Server submitted for review.',
         });
         form.reset(); 
+        if (bannerPreview) {
+            console.log("[ServerSubmissionForm] Revoking bannerPreview ObjectURL on successful form submission:", bannerPreview);
+            URL.revokeObjectURL(bannerPreview);
+        }
+        if (logoPreview) {
+            console.log("[ServerSubmissionForm] Revoking logoPreview ObjectURL on successful form submission:", logoPreview);
+            URL.revokeObjectURL(logoPreview);
+        }
         setBannerPreview(null);
         setLogoPreview(null);
-        if (currentFormActionState.server && !currentFormActionState.error) {
-          router.push('/dashboard?submissionSuccess=true');
+        if (currentFormActionState.serverId && !currentFormActionState.error) {
+          router.push(`/dashboard?submissionSuccess=true&serverId=${currentFormActionState.serverId}`);
+        } else if (!currentFormActionState.error) {
+            router.push('/dashboard?submissionSuccess=true');
         }
       }
     }
-  }, [currentFormActionState, toast, form, router]);
+  }, [currentFormActionState, toast, form, router, bannerPreview, logoPreview]);
 
 
   if (authLoading) {
@@ -305,39 +364,53 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             
             <FormItem>
-              <FormLabel>Banner Image (Optional)</FormLabel>
+              <FormLabel htmlFor="banner-upload">Banner Image (Optional)</FormLabel>
               <FormControl>
                 <Input 
+                  id="banner-upload"
                   type="file" 
                   accept="image/jpeg,image/png,image/webp,image/gif"
-                  onChange={(e) => e.target.files?.[0] && handleClientSideFileUpload(e.target.files[0], 'banner', setBannerPreview, setIsUploadingBanner, 'bannerUrl')}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                        handleClientSideFileUpload(file, 'banner', setBannerPreview, setIsUploadingBanner, 'bannerUrl');
+                    }
+                    e.target.value = ''; 
+                  }}
                   disabled={isUploadingBanner}
                   className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
                 />
               </FormControl>
               {isUploadingBanner && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading banner...</div>}
-              {bannerPreview && !isUploadingBanner && form.getValues("bannerUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Banner uploaded and URL set.</div>}
+              {bannerPreview && !isUploadingBanner && form.getValues("bannerUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Banner uploaded.</div>}
               {bannerPreview && <img src={bannerPreview} alt="Banner preview" data-ai-hint="game screenshot" className="mt-2 max-h-40 w-full object-contain rounded-md border" />}
-              {!bannerPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-32 bg-muted/50"><ImageUp className="h-8 w-8 text-muted-foreground mb-2" /><p className="text-sm text-muted-foreground">Banner Preview</p></div> }
+              {!bannerPreview && !isUploadingBanner && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-32 bg-muted/50"><ImageUp className="h-8 w-8 text-muted-foreground mb-2" /><p className="text-sm text-muted-foreground">Banner Preview</p></div> }
               <FormDescription>Recommended size: 800x200px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
               <FormMessage>{form.formState.errors.bannerUrl?.message}</FormMessage>
             </FormItem>
 
             <FormItem>
-              <FormLabel>Logo Image (Optional)</FormLabel>
+              <FormLabel htmlFor="logo-upload">Logo Image (Optional)</FormLabel>
               <FormControl>
                   <Input 
+                    id="logo-upload"
                     type="file" 
                     accept="image/jpeg,image/png,image/webp,image/gif"
-                    onChange={(e) => e.target.files?.[0] && handleClientSideFileUpload(e.target.files[0], 'logo', setLogoPreview, setIsUploadingLogo, 'logoUrl')}
+                    onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                           handleClientSideFileUpload(file, 'logo', setLogoPreview, setIsUploadingLogo, 'logoUrl');
+                        }
+                        e.target.value = ''; 
+                    }}
                     disabled={isUploadingLogo}
                     className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
                   />
               </FormControl>
               {isUploadingLogo && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading logo...</div>}
-              {logoPreview && !isUploadingLogo && form.getValues("logoUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Logo uploaded and URL set.</div>}
+              {logoPreview && !isUploadingLogo && form.getValues("logoUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Logo uploaded.</div>}
               {logoPreview && <img src={logoPreview} alt="Logo preview" data-ai-hint="square logo" className="mt-2 h-24 w-24 object-contain rounded-md border" />}
-              {!logoPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-24 w-24 bg-muted/50"><ImageUp className="h-6 w-6 text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">Logo Preview</p></div> }
+              {!logoPreview && !isUploadingLogo && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-24 w-24 bg-muted/50"><ImageUp className="h-6 w-6 text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">Logo Preview</p></div> }
               <FormDescription>Recommended size: 100x100px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
               <FormMessage>{form.formState.errors.logoUrl?.message}</FormMessage>
             </FormItem>
@@ -360,7 +433,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
                         disabled={isSubmittingForm || isUploadingBanner || isUploadingLogo}>
                    {(isSubmittingForm || isUploadingBanner || isUploadingLogo) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-                   {(isSubmittingForm || isUploadingBanner || isUploadingLogo) ? 'Processing...' : 'Submit Server'}
+                   {isSubmittingForm ? 'Submitting...' : (isUploadingBanner || isUploadingLogo) ? 'Uploading...' : 'Submit Server'}
                 </Button>
             </div>
             </form>
@@ -369,4 +442,3 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
-
