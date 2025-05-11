@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { voteAction } from '@/lib/actions';
 import { useToast } from '@/hooks/use-toast';
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getServerOnlineStatus } from '@/lib/firebase-data';
@@ -29,34 +29,42 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   const [votedRecently, setVotedRecently] = useState(false);
 
   useEffect(() => {
-    setServerData(initialServer); // Update internal state if prop changes (e.g. list re-sort)
+    setServerData(initialServer); 
   }, [initialServer]);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      if (serverData.status === 'approved') {
-        setIsLoadingStats(true);
-        try {
-          const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
-          setServerData(prevServer => ({ ...prevServer, ...stats }));
-        } catch (error) {
-          console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
-          setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
-        } finally {
-          setIsLoadingStats(false);
-        }
-      } else {
-        // For non-approved servers, ensure their stats reflect what's in DB if they were fetched on submission
-        // or just show them as potentially offline if no live check is done.
-        setServerData(prevServer => ({ ...prevServer, isOnline: initialServer.isOnline, playerCount: initialServer.playerCount, maxPlayers: initialServer.maxPlayers }));
+  const fetchStats = useCallback(async () => {
+    if (serverData.status === 'approved' && serverData.ipAddress && serverData.port) {
+      setIsLoadingStats(true);
+      try {
+        // console.log(`Fetching stats for ${serverData.name} (${serverData.ipAddress}:${serverData.port}) in ServerCard`);
+        const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
+        setServerData(prevServer => ({ ...prevServer, ...stats }));
+      } catch (error) {
+        console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
+        setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0, maxPlayers: prevServer.maxPlayers || 0 }));
+      } finally {
+        setIsLoadingStats(false);
       }
-    };
+    } else if (serverData.status !== 'approved') {
+      // For non-approved servers, reflect database state or defaults
+      setServerData(prevServer => ({ 
+        ...prevServer, 
+        isOnline: initialServer.isOnline ?? false, 
+        playerCount: initialServer.playerCount ?? 0, 
+        maxPlayers: initialServer.maxPlayers ?? 0 
+      }));
+      setIsLoadingStats(false); // Not loading live stats
+    }
+  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name, initialServer.isOnline, initialServer.playerCount, initialServer.maxPlayers]);
 
-    fetchStats();
-    // Optional: Set an interval to re-fetch stats, e.g., every 60 seconds
-    // const intervalId = setInterval(fetchStats, 60000);
-    // return () => clearInterval(intervalId);
-  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, initialServer.isOnline, initialServer.playerCount, initialServer.maxPlayers, serverData.name]);
+
+  useEffect(() => {
+    fetchStats(); // Initial fetch
+
+    // Set an interval to re-fetch stats, e.g., every 60 seconds
+    const intervalId = setInterval(fetchStats, 60000);
+    return () => clearInterval(intervalId); // Cleanup interval on component unmount
+  }, [fetchStats]); // Rerun if fetchStats changes (e.g. serverData.id etc.)
 
 
   const handleVote = async () => {
@@ -65,7 +73,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         title: 'Login Required',
         description: 'You need to be logged in to vote.',
         variant: 'destructive',
-        action: <Button asChild><Link href="/login">Login</Link></Button>
+        action: <Button asChild><Link href="/login?redirect=">Login</Link></Button> // Added redirect to current page or home
       });
       return;
     }
@@ -99,14 +107,17 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         setVotedRecently(false);
       }
     });
+    // Cooldown period before votedRecently is reset (e.g., 60 seconds client-side visual feedback)
+    // The actual vote lock is server-side (Firestore rule or timestamp check)
     setTimeout(() => setVotedRecently(false), 60000); 
   };
 
   const voteButtonDisabled = isPending || votedRecently || authLoading;
-  const voteButtonText = isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote');
+  const voteButtonText = authLoading ? <Loader2 className="animate-spin" /> : (isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote'));
+
 
   return (
-    <Card className="flex flex-col h-full overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300">
+    <Card className="flex flex-col h-full overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 bg-card">
       <CardHeader className="p-0 relative">
         {serverData.bannerUrl ? (
           <Image
@@ -116,6 +127,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             height={150}
             className="w-full h-36 object-cover"
             data-ai-hint="game landscape"
+            unoptimized={serverData.bannerUrl.startsWith('http://')} // Example for external non-optimized http images
           />
         ) : (
           <div className="w-full h-36 bg-secondary flex items-center justify-center" data-ai-hint="abstract pattern">
@@ -123,7 +135,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
           </div>
         )}
         {serverData.logoUrl && (
-           <div className="absolute top-2 left-2 bg-card p-1 rounded-md shadow-md">
+           <div className="absolute top-2 left-2 bg-card/80 backdrop-blur-sm p-1 rounded-md shadow-md">
             <Image
                 src={serverData.logoUrl}
                 alt={`${serverData.name} logo`}
@@ -131,12 +143,13 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 height={48}
                 className="rounded"
                 data-ai-hint="game icon"
+                unoptimized={serverData.logoUrl.startsWith('http://')}
             />
            </div>
         )}
       </CardHeader>
       <CardContent className="p-4 flex-grow">
-        <CardTitle className="text-xl mb-2 truncate">
+        <CardTitle className="text-xl mb-2 truncate text-primary">
           <Link href={`/servers/${serverData.id}`} className="hover:text-accent transition-colors">
             {serverData.name}
           </Link>
@@ -147,15 +160,15 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             <span>{serverData.game}</span>
           </div>
           <div className="flex items-center gap-2">
-            {isLoadingStats ? (
+            {isLoadingStats && serverData.status === 'approved' ? (
               <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
             ) : serverData.isOnline ? (
               <CheckCircle2 className="w-4 h-4 text-green-500" />
             ) : (
               <XCircle className="w-4 h-4 text-red-500" />
             )}
-            <span>{isLoadingStats ? 'Updating...' : (serverData.isOnline ? 'Online' : 'Offline')}</span>
-            {!isLoadingStats && serverData.isOnline && (
+            <span>{isLoadingStats && serverData.status === 'approved' ? 'Updating...' : (serverData.isOnline ? 'Online' : 'Offline')}</span>
+            {!isLoadingStats && serverData.isOnline && serverData.status === 'approved' && (
               <Badge variant="secondary" className="ml-auto">
                 <Users className="w-3 h-3 mr-1" />
                 {serverData.playerCount}/{serverData.maxPlayers}
@@ -165,7 +178,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
           <p className="line-clamp-2 text-foreground/80">{serverData.description}</p>
         </div>
       </CardContent>
-      <CardFooter className="p-4 flex items-center justify-between">
+      <CardFooter className="p-4 flex items-center justify-between border-t border-border/50 mt-auto">
         <div className="flex items-center gap-1 text-accent">
           <ThumbsUp className="w-5 h-5" />
           <span className="font-semibold">{serverData.votes}</span>
@@ -173,28 +186,34 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         <TooltipProvider>
           <Tooltip delayDuration={200}>
             <TooltipTrigger asChild>
+              {/* Span wrapper needed for disabled button tooltip to work */}
               <span> 
                 <Button 
                   onClick={handleVote} 
-                  disabled={voteButtonDisabled && user !== null} 
+                  disabled={voteButtonDisabled || serverData.status !== 'approved'} 
                   size="sm" 
                   variant="outline" 
-                  className="border-accent text-accent hover:bg-accent hover:text-accent-foreground"
-                  aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
+                  className="border-accent text-accent hover:bg-accent hover:text-accent-foreground disabled:opacity-70 disabled:cursor-not-allowed"
+                  aria-label={!user && !authLoading ? "Login to vote" : (serverData.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
                 >
-                  {authLoading ? 'Loading...' : voteButtonText}
+                  {voteButtonText}
                 </Button>
               </span>
             </TooltipTrigger>
-            {!user && !authLoading && (
+            {(!user && !authLoading) && (
               <TooltipContent>
                 <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
               </TooltipContent>
             )}
              {votedRecently && user && (
               <TooltipContent>
-                <p>You've voted recently!</p>
+                <p>You've voted recently for this server!</p>
               </TooltipContent>
+            )}
+            {serverData.status !== 'approved' && user && (
+                 <TooltipContent>
+                    <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" />This server is not approved for voting.</p>
+                </TooltipContent>
             )}
           </Tooltip>
         </TooltipProvider>
