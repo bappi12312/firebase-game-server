@@ -10,6 +10,7 @@ import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, C
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect, useCallback } from 'react';
+import { FeatureServerDialog } from './FeatureServerDialog'; 
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
@@ -29,6 +30,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const [isVotePending, startVoteTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
+  const [isFeatureDialogOpen, setIsFeatureDialogOpen] = useState(false);
 
   useEffect(() => {
     setServer(initialServerData);
@@ -141,6 +143,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const isCurrentlyFeatured = server.isFeatured && server.featuredUntil && new Date(server.featuredUntil) > new Date();
   const isIndefinitelyFeatured = server.isFeatured && !server.featuredUntil;
 
+  const handleFeatureSuccess = (updatedServer: Server) => {
+    setServer(updatedServer); 
+    // revalidatePath is handled by the server action
+  };
+
   return (
     <Card className="overflow-hidden shadow-xl">
       <CardHeader className="p-0 relative">
@@ -242,20 +249,20 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
           </div>
         )}
 
-        {/* Placeholder for PayPal integration - Promote Server button */}
-        {server.status === 'approved' && !server.isFeatured && (
+        {server.status === 'approved' && !isCurrentlyFeatured && !isIndefinitelyFeatured && (
           <div className="mt-6 border-t pt-6">
             <h3 className="text-xl font-semibold mb-2 text-primary">Promote Your Server</h3>
             <p className="text-muted-foreground mb-3">
               Want to get more visibility? Feature your server on our list!
             </p>
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               className="bg-yellow-500 hover:bg-yellow-600 text-yellow-950"
-              onClick={() => toast({ title: "Coming Soon!", description: "PayPal integration for server promotion is under development."})}
+              onClick={() => setIsFeatureDialogOpen(true)}
             >
               <Star className="w-5 h-5 mr-2 fill-current" /> Feature This Server
             </Button>
+            <FeatureServerDialog server={server} open={isFeatureDialogOpen} onOpenChange={setIsFeatureDialogOpen} onSuccess={handleFeatureSuccess} />
           </div>
         )}
 
