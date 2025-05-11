@@ -15,7 +15,7 @@ import { serverFormSchema } from '@/lib/schemas';
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, AlertCircle, UploadCloud } from 'lucide-react';
+import { Loader2, AlertCircle, UploadCloud, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -34,8 +34,8 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const router = useRouter();
   
   const initialState: SubmitServerFormState = { message: '', error: false };
-  const [state, formAction] = useActionState(submitServerAction, initialState);
-  const [isPending, startTransition] = useTransition();
+  // const [state, formAction] = useActionState(submitServerAction, initialState); // Keep for potential direct form action
+  const [isSubmitting, startSubmitTransition] = useTransition();
 
 
   const form = useForm<ServerFormValues>({
@@ -46,39 +46,34 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       port: 25565, 
       game: '',
       description: '',
-      bannerUrl: '',
-      logoUrl: '',
+      bannerFile: null,
+      logoFile: null,
+      bannerUrl: '', // Keep if direct URL fallback is desired
+      logoUrl: '',   // Keep if direct URL fallback is desired
       tags: '',
     },
   });
 
- useEffect(() => {
-    if (state?.message) {
-      if (state.error) {
-        toast({
-          title: 'Submission Failed',
-          description: state.message || 'Please check the form for errors.',
-          variant: 'destructive',
-        });
-        if (state.errors) {
-          state.errors.forEach(err => {
-            if (err.path) { // Check if err.path exists
-                 form.setError(err.path as keyof ServerFormValues, { message: err.message });
-            }
-          });
-        }
-      } else {
-        toast({
-          title: 'Success!',
-          description: state.message || 'Server submitted for review.',
-        });
-        form.reset(); 
-        router.push('/dashboard'); 
-      }
-    }
-  }, [state, toast, form, router]);
+  const [bannerPreview, setBannerPreview] = useState<string | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
-  const handleFormSubmit = (data: ServerFormValues) => {
+ const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>, fieldName: 'bannerFile' | 'logoFile', setPreview: (url: string | null) => void) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      form.setValue(fieldName, file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      form.setValue(fieldName, null);
+      setPreview(null);
+    }
+  };
+
+
+  const handleFormSubmit = async (data: ServerFormValues) => {
     if (!user?.uid) {
       toast({
         title: "Authentication Error",
@@ -90,14 +85,39 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     
     const formData = new FormData();
     Object.entries(data).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
+      if (value instanceof File) {
+        formData.append(key, value);
+      } else if (value !== undefined && value !== null && typeof value !== 'object') { // Avoid appending null/undefined files
         formData.append(key, String(value));
       }
     });
     formData.append('userId', user.uid);
 
-    startTransition(() => {
-        formAction(formData);
+    startSubmitTransition(async () => {
+        const result = await submitServerAction(initialState, formData); // Pass previous state correctly
+        if (result.error) {
+            toast({
+            title: 'Submission Failed',
+            description: result.message || 'Please check the form for errors.',
+            variant: 'destructive',
+            });
+            if (result.errors) {
+            result.errors.forEach(err => {
+                if (err.path) {
+                    form.setError(err.path as keyof ServerFormValues, { message: err.message });
+                }
+            });
+            }
+        } else {
+            toast({
+            title: 'Success!',
+            description: result.message || 'Server submitted for review.',
+            });
+            form.reset(); 
+            setBannerPreview(null);
+            setLogoPreview(null);
+            router.push('/dashboard?submissionSuccess=true'); 
+        }
     });
   };
 
@@ -105,6 +125,10 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     return (
       <Card className="max-w-2xl mx-auto my-8">
         <CardHeader>
+          <Button onClick={() => router.back()} variant="outline" size="sm" className="mb-4 self-start">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
+            </Button>
           <CardTitle className="text-2xl">Submit Your Server</CardTitle>
           <CardDescription>Loading authentication status...</CardDescription>
         </CardHeader>
@@ -119,6 +143,10 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     return (
       <Card className="max-w-2xl mx-auto my-8">
         <CardHeader>
+          <Button onClick={() => router.back()} variant="outline" size="sm" className="mb-4 self-start">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
+            </Button>
           <CardTitle className="text-2xl">Submit Your Server</CardTitle>
         </CardHeader>
         <CardContent className="text-center">
@@ -139,6 +167,10 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   return (
     <Card className="max-w-2xl mx-auto my-8">
       <CardHeader>
+        <Button onClick={() => router.back()} variant="outline" size="sm" className="mb-4 self-start">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+        </Button>
         <CardTitle className="text-2xl">Submit Your Server</CardTitle>
         <CardDescription>Fill in the details below to list your server on ServerSpotlight.</CardDescription>
       </CardHeader>
@@ -233,34 +265,47 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                 </FormItem>
               )}
             />
+            
             <FormField
               control={form.control}
-              name="bannerUrl"
+              name="bannerFile"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Banner URL (Optional)</FormLabel>
+                  <FormLabel>Banner Image (Optional)</FormLabel>
                   <FormControl>
-                    <Input placeholder="https://example.com/banner.jpg" {...field} />
+                    <Input 
+                      type="file" 
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      onChange={(e) => handleFileChange(e, 'bannerFile', setBannerPreview)}
+                    />
                   </FormControl>
-                  <FormDescription>Recommended size: 800x200px. Must be a direct image link.</FormDescription>
+                   {bannerPreview && <img src={bannerPreview} alt="Banner preview" className="mt-2 max-h-40 object-contain rounded-md border" />}
+                  <FormDescription>Recommended size: 800x200px. Max 5MB.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
-              name="logoUrl"
+              name="logoFile"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Logo URL (Optional)</FormLabel>
+                  <FormLabel>Logo Image (Optional)</FormLabel>
                   <FormControl>
-                    <Input placeholder="https://example.com/logo.png" {...field} />
+                     <Input 
+                       type="file" 
+                       accept="image/jpeg,image/png,image/webp,image/gif"
+                       onChange={(e) => handleFileChange(e, 'logoFile', setLogoPreview)}
+                     />
                   </FormControl>
-                  <FormDescription>Recommended size: 100x100px. Must be a direct image link.</FormDescription>
+                   {logoPreview && <img src={logoPreview} alt="Logo preview" className="mt-2 max-h-24 w-24 object-contain rounded-md border" />}
+                  <FormDescription>Recommended size: 100x100px. Max 5MB.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+            
             <FormField
               control={form.control}
               name="tags"
@@ -277,9 +322,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={isPending || form.formState.isSubmitting}>
-                   {(isPending || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-                   {(isPending || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
+                        disabled={isSubmitting || form.formState.isSubmitting}>
+                   {(isSubmitting || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                   {(isSubmitting || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
                 </Button>
             </div>
             </form>

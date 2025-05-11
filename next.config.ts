@@ -19,17 +19,23 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: 'https',
-        hostname: 'scontent.fdac14-1.fna.fbcdn.net', // Added for Facebook content
+        hostname: 'scontent.fdac14-1.fna.fbcdn.net', 
         port: '',
         pathname: '/**',
       },
       {
-        protocol: 'http', // Allow http for potentially unoptimized images
-        hostname: '**', // Allow all hostnames (use with caution, or specify known ones)
+        protocol: 'https', // For Firebase Storage
+        hostname: 'firebasestorage.googleapis.com',
+        port: '',
+        pathname: '/**',
       },
       {
-        protocol: 'https', // Allow https for potentially unoptimized images
-        hostname: '**', // Allow all hostnames (use with caution, or specify known ones)
+        protocol: 'http', 
+        hostname: '**', 
+      },
+      {
+        protocol: 'https', 
+        hostname: '**', 
       }
     ],
   },

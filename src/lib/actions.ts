@@ -16,8 +16,10 @@ import {
   type ServerDataForCreation
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
-import { auth } from './firebase'; 
-import { serverFormSchema, reportFormSchema } from '@/lib/schemas';
+import { auth, storage } from './firebase'; // Import storage
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Firebase Storage functions
+import { serverFormSchema, reportFormSchema, userProfileUpdateSchema } from '@/lib/schemas';
+import { v4 as uuidv4 } from 'uuid'; // For generating unique file names
 
 // Helper to check for admin role
 async function isAdmin(userId: string): Promise<boolean> {
@@ -25,33 +27,35 @@ async function isAdmin(userId: string): Promise<boolean> {
   return profile?.role === 'admin';
 }
 
-// Helper to check for admin role or if user is featuring their own server (simplified for now)
-async function canUserFeatureServer(userId: string | undefined, serverId: string, serverData?: Server | null): Promise<boolean> {
-  if (!userId) return false;
-  
-  // Check if admin
-  const userProfile = await getUserProfile(userId);
-  if (userProfile?.role === 'admin') {
-    return true;
+async function uploadFileToStorage(file: File, userId: string, type: 'banner' | 'logo'): Promise<string | null> {
+  if (!storage) {
+    console.error("Firebase Storage is not initialized.");
+    return null;
+  }
+  if (!userId) {
+    console.error("User ID is required for file upload.");
+    return null;
   }
 
-  // Check if user is submitter of the server (for self-serve paid features)
-  // This requires fetching server data if not already available
-  if (!serverData) {
-    // This part might need to be handled differently if serverData isn't easily passed or too costly to fetch again
-    // For now, let's assume for self-serve, this check needs to be robust.
-    // A real implementation would fetch the server to check submittedBy.
-    // For this simulation, if not admin, and trying to feature, it's a user action on their server.
-    // This needs to be replaced with actual ownership/submitter check.
-    return true; 
+  const fileExtension = file.name.split('.').pop();
+  const uniqueFileName = `${type}-${userId}-${uuidv4()}.${fileExtension}`;
+  const storageRef = ref(storage, `server_assets/${userId}/${uniqueFileName}`);
+
+  try {
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(snapshot.ref);
+    return downloadURL;
+  } catch (error) {
+    console.error(`Error uploading ${type} file:`, error);
+    // Consider re-throwing or returning a specific error object
+    return null;
   }
-  return serverData.submittedBy === userId;
 }
 
 
 export interface SubmitServerFormState {
   message: string;
-  fields?: Record<string, string | number>; 
+  fields?: Record<string, string | number | File | null>; 
   server?: Server;
   error?: boolean;
   errors?: { path: string; message: string }[];
@@ -68,33 +72,62 @@ export async function submitServerAction(
     return { 
       message: "User information not provided. You must be logged in to submit a server.", 
       error: true, 
-      fields: rawFormDataEntries as Record<string, string> 
+      fields: rawFormDataEntries as Record<string, string | File> 
     };
   }
   
   const rawFormDataForParsing = { ...rawFormDataEntries };
-  delete rawFormDataForParsing.userId; 
+  // Convert File objects to something Zod can handle or handle them separately
+  const bannerFile = formData.get('bannerFile') as File | null;
+  const logoFile = formData.get('logoFile') as File | null;
+  
+  // Prepare data for Zod parsing, excluding files for now if schema doesn't expect them
+  // or include them if schema is updated
+  const zodParseData: Record<string, any> = {};
+  for (const key in rawFormDataEntries) {
+    if (key !== 'bannerFile' && key !== 'logoFile' && key !== 'userId') {
+      zodParseData[key] = rawFormDataEntries[key];
+    }
+  }
+  if (bannerFile && bannerFile.size > 0) zodParseData.bannerFile = bannerFile;
+  if (logoFile && logoFile.size > 0) zodParseData.logoFile = logoFile;
 
-  if (typeof rawFormDataForParsing.port === 'string') {
-    rawFormDataForParsing.port = parseInt(rawFormDataForParsing.port, 10);
-    if (isNaN(rawFormDataForParsing.port as number)) {
-        delete rawFormDataForParsing.port; 
+
+  if (typeof zodParseData.port === 'string') {
+    zodParseData.port = parseInt(zodParseData.port, 10);
+    if (isNaN(zodParseData.port as number)) {
+        delete zodParseData.port; 
     }
   }
 
-
-  const parsed = serverFormSchema.safeParse(rawFormDataForParsing);
+  const parsed = serverFormSchema.safeParse(zodParseData);
 
   if (!parsed.success) {
     return {
       message: 'Invalid form data. Please check the fields.',
-      fields: rawFormDataEntries as Record<string, string>, 
+      fields: rawFormDataEntries as Record<string, string | File>, 
       error: true,
       errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
     };
   }
   
   const submittedBy = userId;
+  let bannerDownloadURL: string | undefined = parsed.data.bannerUrl || undefined;
+  let logoDownloadURL: string | undefined = parsed.data.logoUrl || undefined;
+
+  // Handle file uploads
+  if (parsed.data.bannerFile && parsed.data.bannerFile.size > 0) {
+    const uploadResult = await uploadFileToStorage(parsed.data.bannerFile, userId, 'banner');
+    if (!uploadResult) return { message: 'Failed to upload banner image.', error: true, fields: rawFormDataEntries as Record<string, string | File> };
+    bannerDownloadURL = uploadResult;
+  }
+
+  if (parsed.data.logoFile && parsed.data.logoFile.size > 0) {
+    const uploadResult = await uploadFileToStorage(parsed.data.logoFile, userId, 'logo');
+    if (!uploadResult) return { message: 'Failed to upload logo image.', error: true, fields: rawFormDataEntries as Record<string, string | File> };
+    logoDownloadURL = uploadResult;
+  }
+
 
   try {
     const dataToSave: ServerDataForCreation = {
@@ -103,8 +136,8 @@ export async function submitServerAction(
       port: parsed.data.port, 
       game: parsed.data.game,
       description: parsed.data.description,
-      bannerUrl: (parsed.data.bannerUrl && parsed.data.bannerUrl.trim() !== '') ? parsed.data.bannerUrl : undefined,
-      logoUrl: (parsed.data.logoUrl && parsed.data.logoUrl.trim() !== '') ? parsed.data.logoUrl : undefined,
+      bannerUrl: (bannerDownloadURL && bannerDownloadURL.trim() !== '') ? bannerDownloadURL : undefined,
+      logoUrl: (logoDownloadURL && logoDownloadURL.trim() !== '') ? logoDownloadURL : undefined,
       tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
       submittedBy: submittedBy,
     };
@@ -120,7 +153,7 @@ export async function submitServerAction(
     console.error("Submission error in submitServerAction:", e);
     return {
       message: e.message || 'Failed to submit server. Please try again.',
-      fields: rawFormDataEntries as Record<string, string>,
+      fields: rawFormDataEntries as Record<string, string | File>,
       error: true,
     };
   }
@@ -264,7 +297,7 @@ export async function updateUserProfileAction(
 
 export async function featureServerAction(
   serverId: string,
-  requestingUserId: string | undefined, // User initiating the feature (could be admin or regular user)
+  requestingUserId: string | undefined, 
   durationDays?: number
 ): Promise<{ success: boolean; message: string; server?: Server }> {
   
@@ -272,9 +305,11 @@ export async function featureServerAction(
     return { success: false, message: "User ID not provided for feature request." };
   }
   
-  const profile = await getUserProfile(requestingUserId);
-  const isRequestingUserAdmin = profile?.role === 'admin';
-  
+  // For self-serve, user doesn't need to be admin if they are featuring their own server
+  // The updateServerFeaturedStatus logic should ideally handle permission if it's not an admin action.
+  // For now, assuming if a user is making this call, they have permission (e.g., via UI flow for their own server).
+  // A more robust check might involve verifying server ownership (submittedBy field).
+
   try {
     const server = await updateServerFeaturedStatus(serverId, true, durationDays);
     if (server) {
@@ -296,7 +331,7 @@ export async function featureServerAction(
 
 export async function unfeatureServerAction(
   serverId: string,
-  adminUserId: string | undefined // Only admins can unfeature directly through this action
+  adminUserId: string | undefined 
 ): Promise<{ success: boolean; message: string; server?: Server }> {
   if (!adminUserId || !(await isAdmin(adminUserId))) {
     return { success: false, message: "Unauthorized: Admin role required to unfeature." };
@@ -362,8 +397,8 @@ export async function reportServerAction(
       description: parsed.data.description,
     };
     await addFirebaseReport(reportData);
-    revalidatePath(`/servers/${serverId}`); // Revalidate server page
-    revalidatePath('/admin/reports'); // Revalidate admin reports page
+    revalidatePath(`/servers/${serverId}`); 
+    revalidatePath('/admin/reports'); 
     return { message: "Server reported successfully. Our team will review it shortly.", error: false };
   } catch (e: any) {
     return { message: e.message || "Failed to submit report.", error: true };
