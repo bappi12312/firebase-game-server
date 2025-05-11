@@ -1,3 +1,4 @@
+import type { FieldValue } from 'firebase/firestore';
 
 export type ServerStatus = 'pending' | 'approved' | 'rejected';
 
@@ -16,10 +17,9 @@ export interface Server {
   isOnline: boolean;
   votes: number;
   submittedBy?: string; 
-  submittedAt: string; 
-  lastVotedAt?: string; 
-  status: ServerStatus; // Added for approval process
-  // promotedUntil?: string; // For PayPal integration: ISO string date
+  submittedAt: string | FieldValue; // Can be ISO string or ServerTimestamp
+  lastVotedAt?: string | FieldValue; // Can be ISO string or ServerTimestamp
+  status: ServerStatus; 
 }
 
 export interface Game {
@@ -34,7 +34,6 @@ export interface UserProfile {
   email: string | null;
   displayName: string | null;
   photoURL?: string | null;
-  role?: 'user' | 'admin'; // User role
-  // lastLoginAt?: string;
-  // createdAt?: string;
+  role?: 'user' | 'admin'; 
+  createdAt?: string | FieldValue; // Can be ISO string or ServerTimestamp
 }

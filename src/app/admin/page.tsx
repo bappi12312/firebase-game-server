@@ -1,26 +1,26 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Server, Activity } from 'lucide-react';
-// import { getFirebaseServers } from '@/lib/firebase-data'; // Example data fetching
+import { Users, Server, HelpCircle } from 'lucide-react';
+import { getServersCountByStatus, getUsersCount } from '@/lib/firebase-data';
 
 export const metadata = {
   title: 'Admin Dashboard - ServerSpotlight',
 };
 
-// Example: Fetch some stats for the dashboard
-// async function getDashboardStats() {
-//   const allServers = await getFirebaseServers('all', 'votes', '', 'all'); // Fetch all servers
-//   const pendingServers = allServers.filter(s => s.status === 'pending').length;
-//   // Fetch user count, etc.
-//   return {
-//     totalServers: allServers.length,
-//     approvedServers: allServers.filter(s => s.status === 'approved').length,
-//     pendingServers,
-//   };
-// }
+async function getDashboardStats() {
+  const totalServers = await getServersCountByStatus('all');
+  const approvedServers = await getServersCountByStatus('approved');
+  const pendingServers = await getServersCountByStatus('pending');
+  const totalUsers = await getUsersCount();
+  return {
+    totalServers,
+    approvedServers,
+    pendingServers,
+    totalUsers,
+  };
+}
 
 export default async function AdminDashboardPage() {
-  // const stats = await getDashboardStats();
+  const stats = await getDashboardStats();
 
   return (
     <div className="space-y-6">
@@ -33,19 +33,19 @@ export default async function AdminDashboardPage() {
             <Server className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{/* stats.totalServers */} (coming soon)</div>
+            <div className="text-2xl font-bold">{stats.totalServers}</div>
             <p className="text-xs text-muted-foreground">
-              {/* stats.approvedServers */} approved servers
+              {stats.approvedServers} approved servers
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending Approval</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
+            <HelpCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{/* stats.pendingServers */} (coming soon)</div>
+            <div className="text-2xl font-bold">{stats.pendingServers}</div>
             <p className="text-xs text-muted-foreground">Servers awaiting review</p>
           </CardContent>
         </Card>
@@ -55,7 +55,7 @@ export default async function AdminDashboardPage() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">(coming soon)</div>
+            <div className="text-2xl font-bold">{stats.totalUsers}</div>
             <p className="text-xs text-muted-foreground">Total users on the platform</p>
           </CardContent>
         </Card>
@@ -66,10 +66,12 @@ export default async function AdminDashboardPage() {
           <CardTitle>Recent Activity</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">Activity feed will be displayed here.</p>
-          {/* Placeholder for recent submissions, votes, user registrations */}
+          <p className="text-muted-foreground">Activity feed (e.g., new submissions, votes) will be displayed here. (Coming Soon)</p>
         </CardContent>
       </Card>
     </div>
   );
 }
+
+// Ensure this page is dynamically rendered or revalidated often
+export const revalidate = 60; // Revalidate stats every 60 seconds

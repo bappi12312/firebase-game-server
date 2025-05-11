@@ -1,4 +1,3 @@
-
 'use client';
 
 import Image from 'next/image';
@@ -6,27 +5,34 @@ import type { Server } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { useAuth } from '@/context/AuthContext'; // Import useAuth
+import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-
+import { getServerOnlineStatus } from '@/lib/firebase-data';
 
 interface ServerDetailsProps {
-  server: Server;
+  server: Server; // Renamed from initialServer for clarity within component
 }
 
-export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
+export function ServerDetails({ server: initialServerData }: ServerDetailsProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
-  const [server, setServer] = useState(initialServer);
-  const [isPending, startTransition] = useTransition();
+  
+  const [server, setServer] = useState(initialServerData);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isVotePending, startVoteTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
+
+  useEffect(() => {
+    // Update internal server state if the prop changes (e.g., due to RSC revalidation)
+    setServer(initialServerData);
+  }, [initialServerData]);
 
   useEffect(() => {
     if (server.submittedAt) {
@@ -40,6 +46,25 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
       setTimeAgo('N/A');
     }
   }, [server.submittedAt]);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      setIsLoadingStats(true);
+      try {
+        const stats = await getServerOnlineStatus(server.ipAddress, server.port);
+        setServer(prevServer => ({ ...prevServer, ...stats }));
+      } catch (error) {
+        console.error(`Failed to fetch server stats for ${server.name}:`, error);
+        setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
+      } finally {
+        setIsLoadingStats(false);
+      }
+    };
+
+    fetchStats();
+    const intervalId = setInterval(fetchStats, 30000); // Refresh stats every 30 seconds
+    return () => clearInterval(intervalId);
+  }, [server.id, server.ipAddress, server.port, server.name]); // server.name for logging
 
   const handleCopyIp = () => {
     navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
@@ -59,10 +84,10 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
       });
       return;
     }
-    if (votedRecently || isPending) return;
+    if (votedRecently || isVotePending) return;
     setVotedRecently(true);
 
-    startTransition(async () => {
+    startVoteTransition(async () => {
       try {
         const result = await voteAction(server.id);
         if (result.success && result.newVotes !== undefined) {
@@ -91,8 +116,8 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
     setTimeout(() => setVotedRecently(false), 60000); 
   };
   
-  const voteButtonDisabled = isPending || votedRecently || authLoading;
-  const voteButtonText = isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
+  const voteButtonDisabled = isVotePending || votedRecently || authLoading;
+  const voteButtonText = isVotePending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
 
   return (
     <Card className="overflow-hidden shadow-xl">
@@ -133,8 +158,9 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
                     <ClipboardCopy className="w-4 h-4 mr-2" />
                     {server.ipAddress}:{server.port}
                 </Button>
+                {/* Direct connect link might not work on all browsers/setups without Steam client integration */}
                 <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground">
-                    <a href={`steam://connect/${server.ipAddress}:${server.port}`}>
+                    <a href={`steam://connect/${server.ipAddress}:${server.port}`} title="Connect via Steam (requires Steam client)">
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Connect
                     </a>
@@ -145,14 +171,22 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
           <InfoCard Icon={Gamepad2} label="Game" value={server.game} />
           <InfoCard 
-            Icon={server.isOnline ? CheckCircle2 : XCircle} 
+            Icon={isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle)} 
             label="Status" 
-            value={server.isOnline ? 'Online' : 'Offline'}
-            iconClassName={server.isOnline ? 'text-green-500' : 'text-red-500'} 
+            value={isLoadingStats ? 'Updating...' : (server.isOnline ? 'Online' : 'Offline')}
+            iconClassName={isLoadingStats ? 'animate-spin text-muted-foreground' : (server.isOnline ? 'text-green-500' : 'text-red-500')} 
           />
-          <InfoCard Icon={Users} label="Players" value={server.isOnline ? `${server.playerCount} / ${server.maxPlayers}` : 'N/A'} />
+          <InfoCard 
+            Icon={isLoadingStats ? Loader2 : Users} 
+            label="Players" 
+            value={isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount} / ${server.maxPlayers}` : 'N/A')} 
+            iconClassName={isLoadingStats ? 'animate-spin text-muted-foreground' : 'text-accent'}
+          />
           <InfoCard Icon={ThumbsUp} label="Votes" value={String(server.votes)} />
           <InfoCard Icon={Info} label="Added" value={timeAgo} />
+          {server.status !== 'approved' && (
+            <InfoCard Icon={AlertCircle} label="Server Status" value={server.status.charAt(0).toUpperCase() + server.status.slice(1)} iconClassName={server.status === 'pending' ? 'text-yellow-500' : 'text-red-500'} />
+          )}
         </div>
         
         <div>
@@ -171,38 +205,40 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
           </div>
         )}
       </CardContent>
-      <CardFooter className="p-6 bg-secondary/30">
-        <div className="flex flex-col sm:flex-row items-center justify-between w-full gap-4">
-            <p className="text-muted-foreground text-sm text-center sm:text-left">Help this server climb the ranks!</p>
-            <TooltipProvider>
-              <Tooltip delayDuration={200}>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button 
-                      onClick={handleVote} 
-                      disabled={voteButtonDisabled && user !== null}
-                      className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
-                      aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
-                    >
-                      <ThumbsUp className="w-4 h-4 mr-2" />
-                      {authLoading ? 'Loading...' : voteButtonText}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                {!user && !authLoading && (
-                  <TooltipContent>
-                    <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
-                  </TooltipContent>
-                )}
-                {votedRecently && user && (
-                  <TooltipContent>
-                    <p>You've voted recently!</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </TooltipProvider>
-        </div>
-      </CardFooter>
+      {server.status === 'approved' && (
+        <CardFooter className="p-6 bg-secondary/30">
+            <div className="flex flex-col sm:flex-row items-center justify-between w-full gap-4">
+                <p className="text-muted-foreground text-sm text-center sm:text-left">Help this server climb the ranks!</p>
+                <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                    <span>
+                        <Button 
+                        onClick={handleVote} 
+                        disabled={voteButtonDisabled && user !== null}
+                        className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
+                        aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
+                        >
+                        <ThumbsUp className="w-4 h-4 mr-2" />
+                        {authLoading ? 'Loading...' : voteButtonText}
+                        </Button>
+                    </span>
+                    </TooltipTrigger>
+                    {!user && !authLoading && (
+                    <TooltipContent>
+                        <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
+                    </TooltipContent>
+                    )}
+                    {votedRecently && user && (
+                    <TooltipContent>
+                        <p>You've voted recently!</p>
+                    </TooltipContent>
+                    )}
+                </Tooltip>
+                </TooltipProvider>
+            </div>
+        </CardFooter>
+      )}
     </Card>
   );
 }
@@ -217,7 +253,7 @@ interface InfoCardProps {
 function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
   return (
     <div className="flex items-center gap-3 p-3 bg-card/50 rounded-md shadow-sm border">
-      <Icon className={`w-5 h-5 ${iconClassName || 'text-accent'}`} />
+      <Icon className={`w-5 h-5 ${iconClassName || 'text-accent'} ${iconClassName?.includes('animate-spin') ? '' : 'shrink-0'}`} />
       <div>
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="font-semibold text-foreground">{value}</p>
@@ -225,4 +261,3 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
-

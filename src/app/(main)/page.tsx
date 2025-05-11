@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { Server, Game, SortOption } from '@/lib/types';
 import { getFirebaseServers, getFirebaseGames } from '@/lib/firebase-data';
 import { ServerList } from '@/components/servers/ServerList';
@@ -9,7 +8,7 @@ import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ServerCrash, WifiOff } from 'lucide-react';
-import { auth, db } from '@/lib/firebase'; // Import auth and db to check initialization
+import { auth, db } from '@/lib/firebase'; 
 
 export default function HomePage() {
   const [allServers, setAllServers] = useState<Server[]>([]);
@@ -19,7 +18,7 @@ export default function HomePage() {
   
   const [searchTerm, setSearchTerm] = useState('');
   const [gameFilter, setGameFilter] = useState('all');
-  const [sortBy, setSortBy] = useState<SortOption>('votes');
+  const [sortBy, setSortBy] = useState<SortOption>('votes'); // Default sort by votes
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -29,7 +28,6 @@ export default function HomePage() {
       setError("Firebase is not configured correctly. Please check the console and ensure your .env.local file has the correct Firebase credentials.");
       setIsLoading(false);
       console.error("Firebase auth or db is not initialized. Check firebase.ts and .env.local.");
-      // Log current env vars for debugging (careful with sensitive data in public logs if any)
       console.log("NEXT_PUBLIC_FIREBASE_PROJECT_ID:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ? "Set" : "Not Set");
       return;
     }
@@ -38,6 +36,7 @@ export default function HomePage() {
       const gamesData = await getFirebaseGames();
       setGames(gamesData);
 
+      // getFirebaseServers handles filtering by searchTerm and sorting by sortBy
       const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
       setAllServers(serversData);
 
@@ -54,25 +53,8 @@ export default function HomePage() {
     loadData();
   }, [loadData]);
 
-
-  const filteredAndSortedServers = useMemo(() => {
-    let servers = [...allServers];
-    
-    if (searchTerm) {
-      servers = servers.filter(
-        (server) =>
-          server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          server.ipAddress.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (server.tags && server.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
-      );
-    }
-    if (sortBy === 'playerCount') {
-       servers.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
-    }
-
-    return servers;
-  }, [allServers, searchTerm, sortBy]);
-
+  // `allServers` is now the definitive list, already filtered and sorted by `getFirebaseServers`
+  const displayedServers = allServers;
 
   if (isLoading) {
     return (
@@ -136,8 +118,8 @@ export default function HomePage() {
         gameFilter={gameFilter}
         sortBy={sortBy}
       />
-      {filteredAndSortedServers.length > 0 ? (
-         <ServerList initialServers={filteredAndSortedServers} />
+      {displayedServers.length > 0 ? (
+         <ServerList initialServers={displayedServers} />
       ) : (
         <div className="text-center py-10 text-muted-foreground">
           <p>No servers found matching your criteria. Try adjusting your filters or search term.</p>
@@ -161,4 +143,3 @@ function CardSkeleton() {
     </div>
   );
 }
-
