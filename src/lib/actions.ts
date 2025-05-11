@@ -16,10 +16,10 @@ import {
   type ServerDataForCreation
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
-import { auth, storage } from './firebase'; // Import storage
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Firebase Storage functions
+import { auth } from './firebase'; // Removed storage import as it's not used here anymore
+// Firebase Storage functions (ref, uploadBytes, getDownloadURL) are removed as uploads are client-side
 import { serverFormSchema, reportFormSchema, userProfileUpdateSchema } from '@/lib/schemas';
-import { v4 as uuidv4 } from 'uuid'; // For generating unique file names
+// uuidv4 removed as it's not used here anymore
 
 // Helper to check for admin role
 async function isAdmin(userId: string): Promise<boolean> {
@@ -27,30 +27,7 @@ async function isAdmin(userId: string): Promise<boolean> {
   return profile?.role === 'admin';
 }
 
-async function uploadFileToStorage(file: File, userId: string, type: 'banner' | 'logo'): Promise<string | null> {
-  if (!storage) {
-    console.error("Firebase Storage is not initialized.");
-    return null;
-  }
-  if (!userId) {
-    console.error("User ID is required for file upload.");
-    return null;
-  }
-
-  const fileExtension = file.name.split('.').pop();
-  const uniqueFileName = `${type}-${userId}-${uuidv4()}.${fileExtension}`;
-  const storageRef = ref(storage, `server_assets/${userId}/${uniqueFileName}`);
-
-  try {
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
-    return downloadURL;
-  } catch (error) {
-    console.error(`Error uploading ${type} file:`, error);
-    // Consider re-throwing or returning a specific error object
-    return null;
-  }
-}
+// uploadFileToStorage function removed as uploads are now client-side
 
 
 export interface SubmitServerFormState {
@@ -76,22 +53,12 @@ export async function submitServerAction(
     };
   }
   
-  const rawFormDataForParsing = { ...rawFormDataEntries };
-  // Convert File objects to something Zod can handle or handle them separately
-  const bannerFile = formData.get('bannerFile') as File | null;
-  const logoFile = formData.get('logoFile') as File | null;
-  
-  // Prepare data for Zod parsing, excluding files for now if schema doesn't expect them
-  // or include them if schema is updated
   const zodParseData: Record<string, any> = {};
   for (const key in rawFormDataEntries) {
-    if (key !== 'bannerFile' && key !== 'logoFile' && key !== 'userId') {
+    if (key !== 'userId') { // Exclude userId as it's handled separately
       zodParseData[key] = rawFormDataEntries[key];
     }
   }
-  if (bannerFile && bannerFile.size > 0) zodParseData.bannerFile = bannerFile;
-  if (logoFile && logoFile.size > 0) zodParseData.logoFile = logoFile;
-
 
   if (typeof zodParseData.port === 'string') {
     zodParseData.port = parseInt(zodParseData.port, 10);
@@ -99,7 +66,7 @@ export async function submitServerAction(
         delete zodParseData.port; 
     }
   }
-
+  
   const parsed = serverFormSchema.safeParse(zodParseData);
 
   if (!parsed.success) {
@@ -112,22 +79,9 @@ export async function submitServerAction(
   }
   
   const submittedBy = userId;
-  let bannerDownloadURL: string | undefined = parsed.data.bannerUrl || undefined;
-  let logoDownloadURL: string | undefined = parsed.data.logoUrl || undefined;
-
-  // Handle file uploads
-  if (parsed.data.bannerFile && parsed.data.bannerFile.size > 0) {
-    const uploadResult = await uploadFileToStorage(parsed.data.bannerFile, userId, 'banner');
-    if (!uploadResult) return { message: 'Failed to upload banner image.', error: true, fields: rawFormDataEntries as Record<string, string | File> };
-    bannerDownloadURL = uploadResult;
-  }
-
-  if (parsed.data.logoFile && parsed.data.logoFile.size > 0) {
-    const uploadResult = await uploadFileToStorage(parsed.data.logoFile, userId, 'logo');
-    if (!uploadResult) return { message: 'Failed to upload logo image.', error: true, fields: rawFormDataEntries as Record<string, string | File> };
-    logoDownloadURL = uploadResult;
-  }
-
+  // URLs now come directly from parsed data, assuming client-side upload.
+  const bannerDownloadURL = parsed.data.bannerUrl || undefined;
+  const logoDownloadURL = parsed.data.logoUrl || undefined;
 
   try {
     const dataToSave: ServerDataForCreation = {
@@ -426,3 +380,4 @@ export async function resolveReportAction(
     return { success: false, message: error.message || "Failed to update report status." };
   }
 }
+

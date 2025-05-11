@@ -15,11 +15,13 @@ import { serverFormSchema } from '@/lib/schemas';
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, AlertCircle, UploadCloud, ArrowLeft } from 'lucide-react';
+import { Loader2, AlertCircle, UploadCloud, ArrowLeft, CheckCircle, XCircle, ImageUp } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-
+import { storage } from '@/lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { v4 as uuidv4 } from 'uuid';
 
 type ServerFormValues = z.infer<typeof serverFormSchema>;
 
@@ -27,16 +29,18 @@ interface ServerSubmissionFormProps {
   games: Game[];
 }
 
+const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
+
 
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth(); 
   const router = useRouter();
   
-  const initialState: SubmitServerFormState = { message: '', error: false };
-  // const [state, formAction] = useActionState(submitServerAction, initialState); // Keep for potential direct form action
-  const [isSubmitting, startSubmitTransition] = useTransition();
-
+  const [currentFormActionState, setCurrentFormActionState] = useState<SubmitServerFormState>({ message: '', error: false });
+  const [isSubmittingForm, startSubmitTransition] = useTransition();
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
@@ -46,29 +50,57 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       port: 25565, 
       game: '',
       description: '',
-      bannerFile: null,
-      logoFile: null,
-      bannerUrl: '', // Keep if direct URL fallback is desired
-      logoUrl: '',   // Keep if direct URL fallback is desired
+      bannerUrl: '', 
+      logoUrl: '',   
       tags: '',
     },
   });
 
   const [bannerPreview, setBannerPreview] = useState<string | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
- const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>, fieldName: 'bannerFile' | 'logoFile', setPreview: (url: string | null) => void) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      form.setValue(fieldName, file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      form.setValue(fieldName, null);
-      setPreview(null);
+  const handleClientSideFileUpload = async (
+    file: File,
+    type: 'banner' | 'logo',
+    setPreviewState: React.Dispatch<React.SetStateAction<string | null>>,
+    setIsUploadingState: React.Dispatch<React.SetStateAction<boolean>>,
+    formFieldName: 'bannerUrl' | 'logoUrl'
+  ) => {
+    if (!user || !storage) {
+      toast({ title: "Error", description: "Cannot upload file. User not authenticated or storage not available.", variant: "destructive" });
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      toast({ title: "File too large", description: `Max file size is ${MAX_FILE_SIZE_MB}MB.`, variant: "destructive"});
+      return;
+    }
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      toast({ title: "Invalid file type", description: "Only JPG, PNG, WEBP, GIF are allowed.", variant: "destructive"});
+      return;
+    }
+
+    setIsUploadingState(true);
+    setPreviewState(URL.createObjectURL(file)); // Show local preview immediately
+
+    try {
+      const fileExtension = file.name.split('.').pop();
+      const uniqueFileName = `${type}-${user.uid}-${uuidv4()}.${fileExtension}`;
+      const storageRef = ref(storage, `server_assets/${user.uid}/${uniqueFileName}`);
+      
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      
+      form.setValue(formFieldName, downloadURL);
+      toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} Uploaded Successfully`, description: "URL set for submission." });
+    } catch (error: any) {
+      console.error(`Error uploading ${type} file:`, error);
+      toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: error.message || "Please try again.", variant: "destructive" });
+      form.setValue(formFieldName, ''); // Clear the URL in form on error
+      setPreviewState(null); // Clear preview on error
+    } finally {
+      setIsUploadingState(false);
     }
   };
 
@@ -84,17 +116,17 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     }
     
     const formData = new FormData();
+    // Append all form data, including the potentially empty bannerUrl/logoUrl if no file was uploaded.
     Object.entries(data).forEach(([key, value]) => {
-      if (value instanceof File) {
-        formData.append(key, value);
-      } else if (value !== undefined && value !== null && typeof value !== 'object') { // Avoid appending null/undefined files
-        formData.append(key, String(value));
+       if (value !== undefined && value !== null) { // Check for undefined or null explicitly
+        formData.append(key, String(value)); // FormData values are strings or Blobs
       }
     });
     formData.append('userId', user.uid);
 
     startSubmitTransition(async () => {
-        const result = await submitServerAction(initialState, formData); // Pass previous state correctly
+        const result = await submitServerAction(currentFormActionState, formData);
+        setCurrentFormActionState(result); // Update state with the result from the action
         if (result.error) {
             toast({
             title: 'Submission Failed',
@@ -116,10 +148,18 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             form.reset(); 
             setBannerPreview(null);
             setLogoPreview(null);
-            router.push('/dashboard?submissionSuccess=true'); 
+            // router.push('/dashboard?submissionSuccess=true'); // Action will handle revalidation
         }
     });
   };
+
+  useEffect(() => {
+    if (currentFormActionState.server && !currentFormActionState.error) {
+        // Redirect on successful submission if server object is present and no error
+        router.push('/dashboard?submissionSuccess=true');
+    }
+  }, [currentFormActionState, router]);
+
 
   if (authLoading) {
     return (
@@ -266,45 +306,43 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               )}
             />
             
-            <FormField
-              control={form.control}
-              name="bannerFile"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Banner Image (Optional)</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="file" 
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      onChange={(e) => handleFileChange(e, 'bannerFile', setBannerPreview)}
-                    />
-                  </FormControl>
-                   {bannerPreview && <img src={bannerPreview} alt="Banner preview" className="mt-2 max-h-40 object-contain rounded-md border" />}
-                  <FormDescription>Recommended size: 800x200px. Max 5MB.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <FormItem>
+              <FormLabel>Banner Image (Optional)</FormLabel>
+              <FormControl>
+                <Input 
+                  type="file" 
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => e.target.files?.[0] && handleClientSideFileUpload(e.target.files[0], 'banner', setBannerPreview, setIsUploadingBanner, 'bannerUrl')}
+                  disabled={isUploadingBanner}
+                  className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                />
+              </FormControl>
+              {isUploadingBanner && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading banner...</div>}
+              {bannerPreview && !isUploadingBanner && form.getValues("bannerUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Banner uploaded and URL set.</div>}
+              {bannerPreview && <img src={bannerPreview} alt="Banner preview" data-ai-hint="game screenshot" className="mt-2 max-h-40 w-full object-contain rounded-md border" />}
+              {!bannerPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-32 bg-muted/50"><ImageUp className="h-8 w-8 text-muted-foreground mb-2" /><p className="text-sm text-muted-foreground">Banner Preview</p></div> }
+              <FormDescription>Recommended size: 800x200px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
+              <FormMessage /> {/* For bannerUrl field errors */}
+            </FormItem>
 
-            <FormField
-              control={form.control}
-              name="logoFile"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Logo Image (Optional)</FormLabel>
-                  <FormControl>
-                     <Input 
-                       type="file" 
-                       accept="image/jpeg,image/png,image/webp,image/gif"
-                       onChange={(e) => handleFileChange(e, 'logoFile', setLogoPreview)}
-                     />
-                  </FormControl>
-                   {logoPreview && <img src={logoPreview} alt="Logo preview" className="mt-2 max-h-24 w-24 object-contain rounded-md border" />}
-                  <FormDescription>Recommended size: 100x100px. Max 5MB.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <FormItem>
+              <FormLabel>Logo Image (Optional)</FormLabel>
+              <FormControl>
+                  <Input 
+                    type="file" 
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(e) => e.target.files?.[0] && handleClientSideFileUpload(e.target.files[0], 'logo', setLogoPreview, setIsUploadingLogo, 'logoUrl')}
+                    disabled={isUploadingLogo}
+                    className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                  />
+              </FormControl>
+              {isUploadingLogo && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading logo...</div>}
+              {logoPreview && !isUploadingLogo && form.getValues("logoUrl") && <div className="flex items-center text-sm text-green-600 mt-2"><CheckCircle className="mr-2 h-4 w-4" /> Logo uploaded and URL set.</div>}
+              {logoPreview && <img src={logoPreview} alt="Logo preview" data-ai-hint="square logo" className="mt-2 h-24 w-24 object-contain rounded-md border" />}
+              {!logoPreview && <div className="mt-2 p-4 border-dashed border-2 rounded-md flex flex-col items-center justify-center h-24 w-24 bg-muted/50"><ImageUp className="h-6 w-6 text-muted-foreground mb-1" /><p className="text-xs text-muted-foreground">Logo Preview</p></div> }
+              <FormDescription>Recommended size: 100x100px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
+              <FormMessage /> {/* For logoUrl field errors */}
+            </FormItem>
             
             <FormField
               control={form.control}
@@ -322,9 +360,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={isSubmitting || form.formState.isSubmitting}>
-                   {(isSubmitting || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-                   {(isSubmitting || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
+                        disabled={isSubmittingForm || isUploadingBanner || isUploadingLogo}>
+                   {(isSubmittingForm || isUploadingBanner || isUploadingLogo) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                   {(isSubmittingForm || isUploadingBanner || isUploadingLogo) ? 'Processing...' : 'Submit Server'}
                 </Button>
             </div>
             </form>
@@ -333,3 +371,4 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
+
