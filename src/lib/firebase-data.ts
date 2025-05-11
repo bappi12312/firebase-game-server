@@ -44,10 +44,10 @@ function formatFirebaseError(error: any, context: string): string {
     const firebaseErrorCode = (error as any).code;
     if (firebaseErrorCode === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
       message += `Firestore permission denied. Please check your Firestore security rules to allow this operation. (Original message: ${error.message})`;
-    } else if (firebaseErrorCode === 'failed-precondition' && error.message && error.message.toLowerCase().includes('index')) {
-      message += `Firestore query requires an index. Please create it in the Firebase console. (Original message: ${error.message})`;
-    }
-     else if (firebaseErrorCode) {
+    } else if (firebaseErrorCode === 'failed-precondition' && error.message && error.message.toLowerCase().includes('query requires an index')) {
+      // Directly use the error.message from Firebase, as it contains the link and necessary info.
+      message = `Error ${context}: ${error.message}`;
+    } else if (firebaseErrorCode) {
       message += `Firebase Error (Code: ${firebaseErrorCode}): ${error.message}`;
     } else {
       message += error.message;
@@ -118,8 +118,8 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
 
   } catch (error: any) {
      if (error.code === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
-        const permissionDeniedMsg = `Firestore permission denied. Check your security rules for users collection. (UID: ${user.uid}). Error details: ${error.message}`;
-        throw new Error(formatFirebaseError({message: permissionDeniedMsg, code: error.code}, "creating/updating user profile in Firestore"));
+        const permissionDeniedMsg = `Firestore permission denied. Check your security rules for users collection. Error details: ${error.message}`;
+        throw new Error(formatFirebaseError({message: permissionDeniedMsg, code: error.code}, `creating/updating user profile in Firestore for UID ${user.uid}`));
      }
      const specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
      throw new Error(specificMessage);
@@ -201,7 +201,10 @@ export async function getFirebaseServers(
         baseOrderByDirection = 'desc';
         break;
       case 'playerCount':
-        qConstraints.push(orderBy('isOnline', 'desc'));
+        // For player count, we also want online servers first.
+        // Firestore requires the first orderBy to match the inequality filter if any.
+        // If no inequality filter on 'isOnline', we can sort by 'isOnline' then 'playerCount'.
+        qConstraints.push(orderBy('isOnline', 'desc')); 
         baseOrderByField = 'playerCount'; 
         baseOrderByDirection = 'desc';
         break;
@@ -244,19 +247,10 @@ export async function getFirebaseServers(
       );
     }
     
-    if (sortBy === 'playerCount') {
-       serverList.sort((a, b) => {
-        if (a.isOnline && !b.isOnline) return -1;
-        if (!a.isOnline && b.isOnline) return 1;
-        if (a.isOnline === b.isOnline) { 
-          if (a.isOnline) { 
-            return (b.playerCount ?? 0) - (a.playerCount ?? 0);
-          }
-          return (b.votes ?? 0) - (a.votes ?? 0); 
-        }
-        return 0; 
-      });
-    }
+    // Client-side sort for player count if primary sort was `isOnline` then `playerCount`
+    // This is now handled by Firestore if the index `isOnline DESC, playerCount DESC` exists.
+    // If sortBy is playerCount, Firestore already sorts by isOnline desc, then playerCount desc.
+    // No need for additional client-side sort for this specific case if indexes are set up.
 
     return serverList;
   } catch (error) {
@@ -454,6 +448,18 @@ const staticGames: Game[] = [
 ];
 
 export async function getFirebaseGames(): Promise<Game[]> {
+  // Simulate fetching games from Firestore if they were dynamic
+  // For now, returning static list
+  // if (!db) {
+  //   throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting games. Database service not available."));
+  // }
+  // try {
+  //   const gamesSnapshot = await getDocs(collection(db, "games"));
+  //   return gamesSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Game));
+  // } catch (error) {
+  //   console.error("Error fetching games from Firestore, returning static list:", error);
+  //   return [...staticGames]; // Fallback to static list on error
+  // }
   return Promise.resolve([...staticGames]);
 }
 
@@ -502,6 +508,7 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
     const userDocRef = doc(db, 'users', uid);
     batch.delete(userDocRef);
 
+    // Also delete their votes subcollection if it exists
     const votesCollectionRef = collection(db, 'users', uid, 'votes');
     const votesSnapshot = await getDocs(votesCollectionRef);
     votesSnapshot.docs.forEach(voteDoc => batch.delete(voteDoc.ref));
@@ -514,6 +521,8 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
 
 
 export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
+    // In a real app, this would use a Steam Query library or similar.
+    // For now, using the mock.
     return fetchMockServerStats(ipAddress, port);
 }
 
@@ -546,29 +555,34 @@ export async function getUsersCount(): Promise<number> {
   }
 }
 
+// This function would ideally run on a schedule (e.g., Cloud Function) or be triggered
+// but for simplicity, it can be called when viewing server details or lists if needed.
 export async function updateServerStatsInFirestore(serverId: string): Promise<void> {
   if (!db) {
+    // console.warn("updateServerStatsInFirestore: Firestore (db) is not initialized. Skipping stat update.");
     return;
   }
   const serverRef = doc(db, 'servers', serverId);
   const serverSnap = await getDoc(serverRef);
 
   if (!serverSnap.exists()) {
+    // console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
     return;
   }
 
   const serverData = serverSnap.data() as Server;
-  if(serverData.status !== 'approved') return; 
+  if(serverData.status !== 'approved') return; // Only update stats for approved servers
 
   try {
     const liveStats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
     await updateDoc(serverRef, {
       isOnline: liveStats.isOnline,
       playerCount: liveStats.playerCount ?? 0,
-      maxPlayers: liveStats.maxPlayers ?? serverData.maxPlayers, 
+      maxPlayers: liveStats.maxPlayers ?? serverData.maxPlayers, // Keep existing maxPlayers if new one is undefined
     });
   } catch (error) {
     console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
+    // If stat fetching fails, mark as offline
     await updateDoc(serverRef, {
       isOnline: false,
       playerCount: 0,
@@ -576,13 +590,27 @@ export async function updateServerStatsInFirestore(serverId: string): Promise<vo
   }
 }
 
+// This function could be used to periodically refresh server listings with live stats.
+// However, calling this for every server on every page load might be expensive.
+// Better to update stats individually or via background process.
 export async function fetchAndRefreshServerListings(
   gameFilter: string = 'all', 
   sortBy: SortOption = 'votes', 
   searchTerm: string = ''
 ): Promise<Server[]> {
   const servers = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
-  return servers;
+  // For each server, you could fetch live stats. This is an N+1 problem if not careful.
+  // const serversWithLiveStats = await Promise.all(
+  //   servers.map(async (server) => {
+  //     if (server.status === 'approved') {
+  //       const liveStats = await getServerOnlineStatus(server.ipAddress, server.port);
+  //       return { ...server, ...liveStats };
+  //     }
+  //     return server;
+  //   })
+  // );
+  // return serversWithLiveStats;
+  return servers; // Return without live refresh for now to avoid performance issues on list view
 }
 
 
@@ -640,3 +668,32 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
     throw new Error(formatFirebaseError(error, `fetching voted server details for user ${userId}`));
   }
 }
+
+// Function to initialize games in Firestore (run once or as needed by admin)
+export async function initializeStaticGamesInFirestore() {
+  if (!db) {
+    console.error("Firestore (db) is not initialized. Cannot initialize games.");
+    return;
+  }
+  try {
+    const gamesCollectionRef = collection(db, 'games');
+    const batch = writeBatch(db);
+    
+    // Check if games already exist to avoid duplicates (simple check by ID)
+    const existingGamesSnapshot = await getDocs(query(gamesCollectionRef, where(documentId(), 'in', staticGames.map(g => g.id))));
+    const existingGameIds = new Set(existingGamesSnapshot.docs.map(doc => doc.id));
+
+    staticGames.forEach(game => {
+      if (!existingGameIds.has(game.id)) {
+        const gameDocRef = doc(gamesCollectionRef, game.id); // Use predefined ID
+        batch.set(gameDocRef, { name: game.name });
+      }
+    });
+    await batch.commit();
+    console.log("Static games initialized/updated in Firestore.");
+  } catch (error) {
+    console.error("Error initializing static games in Firestore:", formatFirebaseError(error, "initializing games"));
+  }
+}
+// Example: Call this once if needed, e.g., from an admin utility or on app startup (carefully)
+// initializeStaticGamesInFirestore();
