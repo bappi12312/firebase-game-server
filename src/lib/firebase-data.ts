@@ -52,26 +52,41 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 }
 
 export async function createUserProfile(user: import('firebase/auth').User): Promise<UserProfile> {
-   if (!db) {
+  if (!db) {
     console.error("Firestore (db) is not initialized. Cannot create user profile.");
     throw new Error("Database service not available for profile creation.");
   }
+
+  const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+  const role: 'user' | 'admin' = (adminEmail && user.email === adminEmail) ? 'admin' : 'user';
+
   const userProfile: UserProfile = {
     uid: user.uid,
-    email: user.email,
-    displayName: user.displayName,
-    photoURL: user.photoURL,
-    // Assign admin role based on .env or other logic. Fallback to 'user'.
-    role: user.email === process.env.ADMIN_EMAIL && process.env.ADMIN_EMAIL ? 'admin' : 'user', 
-    // createdAt: serverTimestamp(), // Use serverTimestamp for consistency
+    email: user.email, // Can be null
+    displayName: user.displayName, // Can be null
+    photoURL: user.photoURL, // Can be null
+    role: role,
+    // createdAt: serverTimestamp(), // If you add this, ensure serverTimestamp is imported from 'firebase/firestore'
   };
+
   try {
     const userDocRef = doc(db, 'users', user.uid);
-    await setDoc(userDocRef, userProfile, { merge: true }); // Use setDoc with merge:true to create or update
+    await setDoc(userDocRef, userProfile, { merge: true }); 
+    console.log(`User profile created/updated for UID: ${user.uid}`);
     return userProfile;
   } catch (error) {
-     console.error("Error creating user profile in Firestore:", error);
-     throw new Error("Could not save user profile to database.");
+     console.error(`Error creating/updating user profile in Firestore for UID: ${user.uid}:`, error);
+     let specificMessage = "Could not save user profile to database.";
+     if (error instanceof Error) {
+        // Attempt to get more specific Firebase error codes if available
+        const firebaseErrorCode = (error as any).code;
+        if (firebaseErrorCode) {
+            specificMessage += ` (Firebase Error Code: ${firebaseErrorCode}, Message: ${error.message})`;
+        } else {
+            specificMessage += ` (Details: ${error.message})`;
+        }
+     }
+     throw new Error(specificMessage);
   }
 }
 
@@ -416,3 +431,4 @@ export async function getServerOnlineStatus(ipAddress: string, port: number): Pr
     // console.log(`Querying actual status for ${ipAddress}:${port} (using mock for now)`);
     return fetchMockServerStats(ipAddress, port);
 }
+

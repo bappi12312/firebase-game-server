@@ -38,13 +38,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           let profile = await getUserProfile(currentUser.uid);
           if (!profile && db) { // Ensure db is also initialized before trying to create profile
-            // If profile doesn't exist, create it
+            console.log(`AuthContext: Profile not found for ${currentUser.uid}, attempting to create.`);
             profile = await createUserProfile(currentUser);
+            console.log(`AuthContext: Profile creation attempt for ${currentUser.uid} resulted in:`, profile);
           }
           setUserProfile(profile);
           setIsAdmin(profile?.role === 'admin');
         } catch (error) {
-          console.error("Error fetching/creating user profile:", error);
+          console.error("AuthContext: Error fetching/creating user profile:", error); 
           setUserProfile(null);
           setIsAdmin(false);
         }
