@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { Gamepad2, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetTrigger, SheetClose } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTrigger, SheetClose, SheetTitle } from '@/components/ui/sheet';
 import { UserProfileButton } from '@/components/auth/UserProfileButton';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -54,6 +54,7 @@ export function Header() {
               </Button>
             </SheetTrigger>
             <SheetContent side="right" className="w-[280px] bg-primary text-primary-foreground p-0">
+              <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
               <div className="flex flex-col h-full">
                 <div className="p-6 border-b border-primary-foreground/20">
                   <Link href="/" className="flex items-center gap-2 text-xl font-bold">
@@ -77,7 +78,7 @@ export function Header() {
                   ))}
                 </nav>
                 <div className="p-4 border-t border-primary-foreground/20">
-                   <UserProfileButton /> {/* Ensure this works well in mobile context or simplify */}
+                   <UserProfileButton />
                 </div>
               </div>
             </SheetContent>
@@ -87,3 +88,4 @@ export function Header() {
     </header>
   );
 }
+
