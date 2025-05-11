@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -8,7 +7,7 @@ import { ServerList } from '@/components/servers/ServerList';
 import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ServerCrash, WifiOff, ShieldAlert } from 'lucide-react';
+import { ServerCrash, WifiOff, ShieldAlert, Settings2 } from 'lucide-react'; // Added Settings2
 import { auth, db } from '@/lib/firebase'; 
 import { useAuth } from '@/context/AuthContext';
 
@@ -18,7 +17,7 @@ export default function HomePage() {
   const [games, setGames] = useState<Game[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { authError } = useAuth(); // Get authError from context
+  const { authError } = useAuth(); 
   
   const [searchTerm, setSearchTerm] = useState('');
   const [gameFilter, setGameFilter] = useState('all');
@@ -46,6 +45,9 @@ export default function HomePage() {
       let friendlyError = "Could not load server data. Please try again later.";
       if (err.message && err.message.toLowerCase().includes('permission denied')) {
         friendlyError = "Could not load server data due to a permission issue. This might be a misconfiguration. Please contact support or check Firestore security rules.";
+      } else if (err.message && err.message.toLowerCase().includes('query requires an index')) {
+        // Use the detailed message from formatFirebaseError which includes the Firebase console link for index creation.
+        friendlyError = err.message; 
       }
       setError(friendlyError);
     } finally {
@@ -95,24 +97,35 @@ export default function HomePage() {
     } else if (error.toLowerCase().includes("permission denied")) {
         IconComponent = ShieldAlert;
         title = "Permission Issue";
+    } else if (error.toLowerCase().includes("query requires an index")) { 
+        IconComponent = Settings2; 
+        title = "Database Index Required";
     }
 
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-         <Alert variant="destructive" className="w-full max-w-lg">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+         <Alert variant="destructive" className="w-full max-w-2xl"> {/* Increased max-width for longer error messages */}
           <IconComponent className="h-5 w-5" />
           <AlertTitle>{title}</AlertTitle>
-          <AlertDescription>
-            {error}
-            {!error.includes("Firebase is not configured") && !error.toLowerCase().includes("permission denied") && " Please check your internet connection or try again later."}
+          <AlertDescription className="break-words"> {/* Allow long URLs to wrap */}
+            {error} {/* This will display the full error message including the Firebase link */}
+            
+            {/* Conditional additional messages: only show if not one of the specific handled errors */}
+            { !error.includes("Firebase is not configured") &&
+              !error.toLowerCase().includes("permission denied") &&
+              !error.toLowerCase().includes("query requires an index") &&
+              " Please check your internet connection or try again later."
+            }
+            {/* This specific message for permission denied is fine */}
             {error.toLowerCase().includes("permission denied") && " Please check your Firestore security rules or contact support."}
+            {/* No specific additional message for index error, as the main error text is self-sufficient with the link */}
           </AlertDescription>
         </Alert>
       </div>
     );
   }
   
-  if (!auth || !db) { // This check is somewhat redundant if error above catches it, but good fallback
+  if (!auth || !db) { 
      return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
          <Alert variant="destructive" className="w-full max-w-lg">
@@ -165,3 +178,4 @@ function CardSkeleton() {
     </div>
   );
 }
+
