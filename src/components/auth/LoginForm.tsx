@@ -37,29 +37,70 @@ export function LoginForm() {
 
   const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
+    if (!auth) {
+        toast({
+            title: 'Login Failed',
+            description: "Authentication service is not available. Please try again later.",
+            variant: 'destructive',
+        });
+        setIsLoading(false);
+        return;
+    }
     try {
-      await signInWithEmailAndPassword(auth, data.email, data.password);
-      toast({
-        title: 'Login Successful!',
-        description: 'Welcome back! You are now signed in.',
-      });
-      const redirectUrl = searchParams.get('redirect') || '/dashboard'; // Redirect to dashboard or intended page
+      const userCredential = await signInWithEmailAndPassword(auth, data.email, data.password);
+      
+      if (!userCredential.user.emailVerified) {
+        toast({
+          title: 'Email Verification Required',
+          description: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+          variant: 'default', // Using default variant, could be 'destructive' if preferred to block login
+          duration: 7000,
+        });
+        // Optionally, sign the user out if you want to strictly enforce verification before any access
+        // await signOut(auth); 
+        // setIsLoading(false);
+        // return; // Prevent redirect if email is not verified
+      } else {
+        toast({
+            title: 'Login Successful!',
+            description: 'Welcome back! You are now signed in.',
+            variant: 'default', // explicit default variant
+        });
+      }
+
+      const redirectUrl = searchParams.get('redirect') || '/dashboard'; 
       router.push(redirectUrl);
+      router.refresh(); // Force refresh to update auth state across components
+
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
-      } else if (error.code === 'auth/too-many-requests') {
-        errorMessage = 'Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.';
-      } else if (error.code === 'auth/user-disabled') {
-        errorMessage = 'This user account has been disabled.';
+      if (error.code) {
+        switch (error.code) {
+          case 'auth/user-not-found':
+          case 'auth/wrong-password':
+          case 'auth/invalid-credential': // General invalid credential error for email/password
+            errorMessage = 'Invalid email or password. Please check your credentials and try again.';
+            break;
+          case 'auth/too-many-requests':
+            errorMessage = 'Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.';
+            break;
+          case 'auth/user-disabled':
+            errorMessage = 'This user account has been disabled by an administrator.';
+            break;
+          case 'auth/network-request-failed':
+            errorMessage = 'Network error. Please check your internet connection and try again.';
+            break;
+          default:
+            errorMessage = `Login failed: ${error.message || 'Unknown error'}`;
+            break;
+        }
       }
       toast({
         title: 'Login Failed',
         description: errorMessage,
         variant: 'destructive',
       });
-      console.error("Login error: ", error);
+      console.error("Login error: ", error.code, error.message);
     } finally {
       setIsLoading(false);
     }
@@ -102,4 +143,3 @@ export function LoginForm() {
     </Form>
   );
 }
-

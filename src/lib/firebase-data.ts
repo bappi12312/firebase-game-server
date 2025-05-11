@@ -133,14 +133,13 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
         } as UserProfile;
     }
     
-    // Fallback if getDoc immediately after setDoc doesn't reflect serverTimestamp correctly (should be rare)
     return {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName,
         photoURL: user.photoURL,
         role: role,
-        createdAt: new Date().toISOString(), // Fallback to client time if serverTimestamp is not immediately available
+        createdAt: new Date().toISOString(), 
         emailVerified: user.emailVerified,
     };
 
@@ -199,7 +198,7 @@ export type ServerDataForCreation = Omit<z.infer<typeof serverFormSchema>, 'tags
 
 export async function getFirebaseServers(
   gameFilter: string = 'all',
-  sortBy: SortOption = 'votes',
+  sortBy: SortOption = 'featured',
   searchTerm: string = '',
   status: ServerStatus | 'all' = 'approved',
   submittedByUserId?: string
@@ -209,7 +208,7 @@ export async function getFirebaseServers(
   }
   try {
     const serverCollRef = collection(db, 'servers');
-    const qConstraints: QueryConstraint[] = [];
+    let qConstraints: QueryConstraint[] = [];
     
     if (status !== 'all') {
       qConstraints.push(where('status', '==', status));
@@ -223,68 +222,54 @@ export async function getFirebaseServers(
     }
     
     // Ranking Algorithm Logic:
-    // Default behavior or when explicitly sorting by 'featured'
-    if (sortBy === 'featured') {
-      if (status === 'approved' || status === 'all') { // Only apply featured sort to relevant status views
-        qConstraints.push(orderBy('isFeatured', 'desc'));
-        qConstraints.push(orderBy('featuredUntil', 'desc')); // Servers with no expiry (null) might come after those with future dates.
-        qConstraints.push(orderBy('votes', 'desc'));
-        qConstraints.push(orderBy('isOnline', 'desc'));
+    // Servers with isFeatured: true and a future featuredUntil date are prioritized.
+    // If featuredUntil is null (indefinite feature), they are also prioritized.
+    // After featured status, sort by the selected 'sortBy' criteria.
+    
+    qConstraints.push(orderBy('isFeatured', 'desc'));
+    // Sort by featuredUntil: nulls (indefinite) should ideally come first or be treated as "very far future"
+    // Firestore sorts nulls first with 'desc', which works here for "indefinite means always featured"
+    qConstraints.push(orderBy('featuredUntil', 'desc')); 
+
+    let baseOrderByField: keyof Server = 'votes';
+    let baseOrderByDirection: 'asc' | 'desc' = 'desc';
+
+    switch (sortBy) {
+      case 'votes':
+        baseOrderByField = 'votes';
+        baseOrderByDirection = 'desc';
+        break;
+      case 'playerCount':
+        qConstraints.push(orderBy('isOnline', 'desc')); 
+        baseOrderByField = 'playerCount'; 
+        baseOrderByDirection = 'desc';
+        break;
+      case 'name':
+        baseOrderByField = 'name';
+        baseOrderByDirection = 'asc';
+        break;
+      case 'submittedAt':
+        baseOrderByField = 'submittedAt';
+        baseOrderByDirection = 'desc';
+        break;
+      case 'featured': // This case ensures 'featured' logic is primary even if explicitly chosen
+         // isFeatured and featuredUntil are already primary sorters
+        qConstraints.push(orderBy('votes', 'desc')); // Secondary sort for featured
         qConstraints.push(orderBy('playerCount', 'desc'));
-        qConstraints.push(orderBy('name', 'asc')); // Final tie-breaker
-      } else {
-        // If status is specific (e.g., 'pending') and sortBy is 'featured',
-        // it doesn't make sense to sort by 'featured' status. Fallback to submission date or votes.
-        qConstraints.push(orderBy('submittedAt', 'desc'));
-        qConstraints.push(orderBy('votes', 'desc'));
-        qConstraints.push(orderBy('name', 'asc'));
-      }
-    } else {
-      // Handle other specific sort options
-      // Always put featured servers first if viewing approved or all statuses, before the main sort criteria
-      if (status === 'approved' || status === 'all') {
-        qConstraints.push(orderBy('isFeatured', 'desc'));
-        qConstraints.push(orderBy('featuredUntil', 'desc'));
-      }
-
-      let baseOrderByField: keyof Server = 'votes';
-      let baseOrderByDirection: 'asc' | 'desc' = 'desc';
-
-      switch (sortBy) {
-        case 'votes':
-          baseOrderByField = 'votes';
-          baseOrderByDirection = 'desc';
-          break;
-        case 'playerCount':
-          // For playerCount sort, also consider online status first if relevant
-          if (status === 'all' || status === 'approved') {
-             qConstraints.push(orderBy('isOnline', 'desc')); 
-          }
-          baseOrderByField = 'playerCount'; 
-          baseOrderByDirection = 'desc';
-          break;
-        case 'name':
-          baseOrderByField = 'name';
-          baseOrderByDirection = 'asc';
-          break;
-        case 'submittedAt':
-          baseOrderByField = 'submittedAt';
-          baseOrderByDirection = 'desc';
-          break;
-        default: // Default to votes if sortBy is unrecognized
-          baseOrderByField = 'votes';
-          baseOrderByDirection = 'desc';
-      }
-      
-      // Add the primary sort field from the switch, ensuring it's not redundant with featured sort.
-      if (baseOrderByField !== 'isFeatured' && baseOrderByField !== 'featuredUntil') {
-        qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
-      }
-       
-      // Add a final tie-breaker by name if not already the primary sort.
-      if (baseOrderByField !== 'name') {
-        qConstraints.push(orderBy('name', 'asc')); 
-      }
+        break;
+      default:
+        baseOrderByField = 'votes';
+        baseOrderByDirection = 'desc';
+    }
+    
+    // Add the primary sort field from the switch, if not already covered by featured sort.
+    if (sortBy !== 'featured' && baseOrderByField !== 'isFeatured' && baseOrderByField !== 'featuredUntil') {
+      qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
+    }
+     
+    // Add a final tie-breaker by name if not already the primary sort or part of featured's secondary sort.
+    if (baseOrderByField !== 'name' && sortBy !== 'featured') {
+      qConstraints.push(orderBy('name', 'asc')); 
     }
     
     const q = query(serverCollRef, ...qConstraints);
@@ -589,7 +574,7 @@ export async function getServerOnlineStatus(ipAddress: string, port: number): Pr
     return fetchMockServerStats(ipAddress, port);
 }
 
-// --- Admin Dashboard Stats ---
+// --- Admin Dashboard Stats & Recent Activity ---
 export async function getServersCountByStatus(status?: ServerStatus | 'all'): Promise<number> {
   if (!db) {
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting server count by status. Database service not available."));
@@ -617,6 +602,72 @@ export async function getUsersCount(): Promise<number> {
     throw new Error(formatFirebaseError(error, "fetching users count"));
   }
 }
+
+export async function getRecentPendingServers(count: number = 5): Promise<Server[]> {
+  if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent pending servers"));
+  try {
+    const q = query(
+      collection(db, 'servers'), 
+      where('status', '==', 'pending'), 
+      orderBy('submittedAt', 'desc'), 
+      limit(count)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id, ...data, 
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
+      } as Server;
+    });
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, "fetching recent pending servers"));
+  }
+}
+
+export async function getRecentPendingReports(count: number = 5): Promise<Report[]> {
+   if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent pending reports"));
+  try {
+    const q = query(
+      collection(db, 'reports'), 
+      where('status', '==', 'pending'), 
+      orderBy('reportedAt', 'desc'), 
+      limit(count)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id, ...data, 
+        reportedAt: toRequiredISODateString(data.reportedAt),
+        resolvedAt: toISODateString(data.resolvedAt),
+      } as Report;
+    });
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, "fetching recent pending reports"));
+  }
+}
+
+export async function getRecentRegisteredUsers(count: number = 5): Promise<UserProfile[]> {
+   if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent registered users"));
+  try {
+    const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(count));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return { 
+        id: docSnap.id, ...data, 
+        createdAt: toRequiredISODateString(data.createdAt),
+        uid: docSnap.id,
+      } as UserProfile;
+    });
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, "fetching recent registered users"));
+  }
+}
+
 
 export async function updateServerStatsInFirestore(
   serverId: string,
@@ -804,7 +855,7 @@ export async function addFirebaseReport(reportData: Omit<Report, 'id' | 'reporte
   }
 }
 
-export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'all'): Promise<Report[]> {
+export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'all', count?: number): Promise<Report[]> {
   if (!db) {
     throw new Error(formatFirebaseError({ message: "Firestore (db) is not initialized." }, "getting reports. Database service not available."));
   }
@@ -813,6 +864,9 @@ export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'a
     let qConstraints: QueryConstraint[] = [orderBy('reportedAt', 'desc')];
     if (filterStatus !== 'all') {
       qConstraints.push(where('status', '==', filterStatus));
+    }
+    if (count) {
+      qConstraints.push(limit(count));
     }
     const q = query(reportsCollRef, ...qConstraints);
     const reportSnapshot = await getDocs(q);

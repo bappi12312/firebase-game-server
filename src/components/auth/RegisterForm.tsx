@@ -56,28 +56,25 @@ export function RegistrationForm() {
 
       try {
         await sendEmailVerification(userCredential.user);
-        toast({
-          title: 'Registration Successful!',
-          description: 'Account created. Please check your email to verify your account before logging in.',
-        });
+        // Toast will be shown on login page via query param
       } catch (verificationError) {
         console.error("Email verification error:", verificationError);
-        toast({
+        toast({ // Show a toast here if verification email sending fails, but still redirect
           title: 'Registration Almost Complete!',
           description: 'Account created, but failed to send verification email. You can try to verify later or contact support.',
           variant: "default" 
         });
       }
       
-      router.push('/login'); 
+      router.push('/login?registrationSuccess=true'); 
     } catch (error: any) {
       let errorMessage = 'An unexpected error occurred. Please try again.';
       if (error.code === 'auth/email-already-in-use') {
         errorMessage = 'This email address is already in use. Please try a different email or login.';
       } else if (error.code === 'auth/operation-not-allowed') {
         errorMessage = 'Email/password accounts are not enabled. Contact support.';
-      } else if (error.message && (error.message.includes("Could not save user profile") || error.message.includes("permission denied"))) {
-        errorMessage = `Registration failed: ${error.message}. Please try again or contact support if the issue persists.`;
+      } else if (error.message && error.message.includes("Could not save user profile") || (error.message && error.message.toLowerCase().includes('permission denied'))) {
+        errorMessage = `Registration failed: ${error.message}. Please ensure Firestore rules allow user profile creation.`;
       }
       toast({
         title: 'Registration Failed',
@@ -140,4 +137,3 @@ export function RegistrationForm() {
     </Form>
   );
 }
-

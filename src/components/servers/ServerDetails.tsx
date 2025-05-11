@@ -86,11 +86,23 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       });
       return;
     }
-    navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
-    toast({
-      title: 'IP Address Copied!',
-      description: `${server.ipAddress}:${server.port} copied to clipboard.`,
-    });
+    const fullAddress = `${server.ipAddress}:${server.port}`;
+    navigator.clipboard.writeText(fullAddress)
+      .then(() => {
+        toast({
+          title: 'IP Address Copied!',
+          description: `${fullAddress} copied to your clipboard.`,
+          variant: 'default', 
+        });
+      })
+      .catch(err => {
+        toast({
+          title: 'Copy Failed',
+          description: 'Could not copy IP address. Please try again or copy manually.',
+          variant: 'destructive',
+        });
+        console.error('Failed to copy IP: ', err);
+      });
   };
 
   const handleVote = async () => {
@@ -140,7 +152,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     setTimeout(() => setVotedRecently(false), 60000); 
   };
   
-  const voteButtonDisabled = isVotePending || votedRecently || authLoading || !user?.uid;
+  const voteButtonDisabled = isVotePending || votedRecently || authLoading || !user?.uid || server.status !== 'approved';
   const voteButtonText = isVotePending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
 
   const isCurrentlyFeatured = server.isFeatured && server.featuredUntil && new Date(server.featuredUntil) > new Date();
@@ -148,8 +160,44 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
   const handleFeatureSuccess = (updatedServer: Server) => {
     setServer(updatedServer); 
-    // revalidatePath is handled by the server action
   };
+  
+  const infoCards = [
+    { key: 'game', Icon: Gamepad2, label: "Game", value: server.game || 'N/A' },
+    { 
+      key: 'status', 
+      Icon: isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle), 
+      label: "Status", 
+      value: isLoadingStats ? 'Updating...' : (server.isOnline ? 'Online' : 'Offline'),
+      iconClassName: isLoadingStats ? 'animate-spin text-muted-foreground' : (server.isOnline ? 'text-green-500' : 'text-red-500')
+    },
+    { 
+      key: 'players',
+      Icon: isLoadingStats ? Loader2 : Users, 
+      label: "Players", 
+      value: isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount ?? 0} / ${server.maxPlayers ?? 0}` : 'N/A'), 
+      iconClassName: isLoadingStats ? 'animate-spin text-muted-foreground' : 'text-accent'
+    },
+    { key: 'votes', Icon: ThumbsUp, label: "Votes", value: String(server.votes ?? 0) },
+    { key: 'added', Icon: Info, label: "Added", value: timeAgo },
+  ];
+
+  if (server.status !== 'approved') {
+    infoCards.push({ 
+      key: 'serverStatus', 
+      Icon: AlertCircle, 
+      label: "Server Status", 
+      value: server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown', 
+      iconClassName: server.status === 'pending' ? 'text-yellow-500' : server.status === 'rejected' ? 'text-red-500' : 'text-muted-foreground'
+    });
+  }
+  if (isCurrentlyFeatured && server.featuredUntil) {
+    infoCards.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
+  }
+  if (isIndefinitelyFeatured) {
+    infoCards.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
+  }
+
 
   return (
     <Card className="overflow-hidden shadow-xl">
@@ -197,15 +245,24 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     <ClipboardCopy className="w-4 h-4 mr-2" />
                     {server.ipAddress && server.port ? `${server.ipAddress}:${server.port}` : 'IP:Port N/A'}
                 </Button>
-                <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
-                    <a 
-                      href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'} 
-                      title={server.ipAddress && server.port ? "Connect via Steam (requires Steam client)" : "Connection info missing"}
-                    >
-                    <ExternalLink className="w-4 h-4 mr-2" />
-                    Connect
-                    </a>
-                </Button>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
+                            <a 
+                            href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'} 
+                            title={server.ipAddress && server.port ? "Connect via Steam" : "Connection info missing"}
+                            >
+                            <ExternalLink className="w-4 h-4 mr-2" />
+                            Connect
+                            </a>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Connect directly to the server using Steam. Requires Steam client installed.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                  {user && server.status === 'approved' && (
                     <Button variant="outline" size="sm" onClick={() => setIsReportDialogOpen(true)} className="text-destructive border-destructive hover:bg-destructive/10">
                         <Flag className="w-4 h-4 mr-2" /> Report
@@ -215,30 +272,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          <InfoCard Icon={Gamepad2} label="Game" value={server.game || 'N/A'} />
-          <InfoCard 
-            Icon={isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle)} 
-            label="Status" 
-            value={isLoadingStats ? 'Updating...' : (server.isOnline ? 'Online' : 'Offline')}
-            iconClassName={isLoadingStats ? 'animate-spin text-muted-foreground' : (server.isOnline ? 'text-green-500' : 'text-red-500')} 
-          />
-          <InfoCard 
-            Icon={isLoadingStats ? Loader2 : Users} 
-            label="Players" 
-            value={isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount ?? 0} / ${server.maxPlayers ?? 0}` : 'N/A')} 
-            iconClassName={isLoadingStats ? 'animate-spin text-muted-foreground' : 'text-accent'}
-          />
-          <InfoCard Icon={ThumbsUp} label="Votes" value={String(server.votes ?? 0)} />
-          <InfoCard Icon={Info} label="Added" value={timeAgo} />
-          {server.status !== 'approved' && (
-            <InfoCard Icon={AlertCircle} label="Server Status" value={server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown'} iconClassName={server.status === 'pending' ? 'text-yellow-500' : server.status === 'rejected' ? 'text-red-500' : 'text-muted-foreground'} />
-          )}
-           {(isCurrentlyFeatured && server.featuredUntil) && (
-             <InfoCard Icon={CalendarClock} label="Featured Until" value={format(new Date(server.featuredUntil), "PP")} iconClassName="text-yellow-500" />
-           )}
-           {isIndefinitelyFeatured && (
-             <InfoCard Icon={Star} label="Featured" value="Active" iconClassName="text-yellow-500 fill-yellow-500" />
-           )}
+          {infoCards.map(card => <InfoCard key={card.key} {...card} />)}
         </div>
         
         <div>
@@ -282,12 +316,12 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 <TooltipProvider>
                 <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
-                    <span>
+                    <span> {/* Span is needed for disabled button tooltip */}
                         <Button 
                         onClick={handleVote} 
                         disabled={voteButtonDisabled} 
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
-                        aria-label={!user?.uid && !authLoading ? "Login to vote" : "Vote for this server"}
+                        aria-label={!user?.uid && !authLoading ? "Login to vote" : (server.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
                         >
                         <ThumbsUp className="w-4 h-4 mr-2" />
                         {authLoading && !user?.uid ? <Loader2 className="animate-spin" /> : voteButtonText}
@@ -299,7 +333,12 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
                     </TooltipContent>
                     )}
-                    {votedRecently && user?.uid && (
+                     {user?.uid && server.status !== 'approved' && (
+                      <TooltipContent>
+                        <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Not approved for voting</p>
+                      </TooltipContent>
+                    )}
+                    {votedRecently && user?.uid && server.status === 'approved' && (
                     <TooltipContent>
                         <p>You've voted recently!</p>
                     </TooltipContent>
@@ -334,4 +373,3 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
-

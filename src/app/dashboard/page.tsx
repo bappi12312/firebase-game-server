@@ -9,17 +9,12 @@ import type { Server, VotedServerInfo, UserProfile } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AlertCircle, Loader2, User, ListChecks, ThumbsUpIcon, Settings, UploadCloud } from 'lucide-react';
+import { AlertCircle, Loader2, User, ListChecks, ThumbsUpIcon, Settings, UploadCloud, Home } from 'lucide-react';
 import Link from 'next/link';
 import { UserSubmittedServerTable } from '@/components/dashboard/UserSubmittedServerTable';
 import { UserVotedServerTable } from '@/components/dashboard/UserVotedServerTable';
-import type { Metadata } from 'next';
+// import type { Metadata } from 'next'; // Not used in client component
 
-
-// Cannot use `export const metadata` in client component.
-// Metadata for client components should be set in parent layout or via Head component if needed.
-// For simplicity, if this page requires unique metadata, consider making it a server component
-// or manage title via `document.title` in `useEffect`.
 
 export default function DashboardPage() {
   const { user, loading: authLoading, userProfile: authContextProfile } = useAuth();
@@ -31,7 +26,7 @@ export default function DashboardPage() {
   
   const [isLoadingSubmitted, setIsLoadingSubmitted] = useState(true);
   const [isLoadingVoted, setIsLoadingVoted] = useState(true);
-  const [isLoadingProfile, setIsLoadingProfile] = useState(true); // If fetching fresh profile
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true); 
   
   const [error, setError] = useState<string | null>(null);
 
@@ -53,17 +48,14 @@ export default function DashboardPage() {
       setError(null);
 
       try {
-        // Fetch fresh profile (optional, if AuthContext might be stale)
         const freshProfile = await getUserProfile(user.uid);
         setProfile(freshProfile);
         setIsLoadingProfile(false);
 
-        // Fetch submitted servers
         const userSubmitted = await getFirebaseServers('all', 'submittedAt', '', 'all', user.uid);
         setSubmittedServers(userSubmitted);
         setIsLoadingSubmitted(false);
 
-        // Fetch voted servers
         const userVoted = await getUserVotedServerDetails(user.uid);
         setVotedServers(userVoted);
         setIsLoadingVoted(false);
@@ -82,7 +74,6 @@ export default function DashboardPage() {
     fetchData();
   }, [fetchData]);
   
-   // Use profile from AuthContext initially, then update if fresh fetch succeeds
   useEffect(() => {
     if (authContextProfile) {
       setProfile(authContextProfile);
@@ -143,6 +134,9 @@ export default function DashboardPage() {
             <p className="text-muted-foreground">Welcome back, {profile?.displayName || user.email}!</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+            <Button asChild variant="outline">
+                <Link href="/"><Home className="mr-2 h-4 w-4" /> Go to Home</Link>
+            </Button>
             <Button asChild variant="outline">
                 <Link href="/servers/submit"><UploadCloud className="mr-2 h-4 w-4" /> Submit Server</Link>
             </Button>

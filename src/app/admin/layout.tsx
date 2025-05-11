@@ -3,11 +3,11 @@
 
 import Link from 'next/link';
 import { redirect, usePathname } from 'next/navigation';
-import { Home, Users, Server, Settings, BarChart3, FileText } from 'lucide-react'; // Added FileText for Reports
+import { Home, Users, Server, Settings, BarChart3, FileText, Activity } from 'lucide-react'; 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
-import { Header } from '@/components/layout/Header'; 
+// Removed global Header import
 import { Toaster } from "@/components/ui/toaster";
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -15,8 +15,8 @@ const adminNavLinks = [
   { href: '/admin', label: 'Dashboard', icon: Home },
   { href: '/admin/servers', label: 'Manage Servers', icon: Server },
   { href: '/admin/users', label: 'Manage Users', icon: Users },
-  { href: '/admin/reports', label: 'Reports', icon: FileText }, // Using FileText as BarChart3 might be for charts
-  // { href: '/admin/settings', label: 'Site Settings', icon: Settings }, // Settings still commented out
+  { href: '/admin/reports', label: 'Reports', icon: FileText },
+  // { href: '/admin/settings', label: 'Site Settings', icon: Settings }, 
 ];
 
 export default function AdminLayout({
@@ -29,10 +29,16 @@ export default function AdminLayout({
 
   if (loading) {
     return (
-       <div className="flex flex-col min-h-screen">
-        <Header />
+       <div className="flex flex-col min-h-screen bg-muted/40">
+        {/* No global Header here */}
+        <header className="bg-primary text-primary-foreground shadow-md sticky top-0 z-50">
+            <div className="container mx-auto px-4 py-3 flex items-center justify-between h-[60px]">
+                 <Skeleton className="h-8 w-48" />
+                 <Skeleton className="h-10 w-10 rounded-full" />
+            </div>
+        </header>
         <div className="flex-grow container mx-auto px-4 py-8 flex">
-            <aside className="w-64 p-4 space-y-2 border-r">
+            <aside className="w-64 p-4 space-y-2 border-r bg-card">
                 {[...Array(adminNavLinks.length)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
             </aside>
             <main className="flex-1 p-6">
@@ -50,10 +56,20 @@ export default function AdminLayout({
   }
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <Header />
+    <div className="flex flex-col min-h-screen bg-muted/40">
+      {/* No global Header here, Admin has its own minimal header or structure */}
+       <header className="bg-card text-card-foreground shadow-sm sticky top-0 z-40 border-b">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+          <Link href="/admin" className="text-2xl font-bold text-primary flex items-center">
+            <Activity className="mr-2 h-6 w-6 text-accent" /> Admin Panel
+          </Link>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/">View Site</Link>
+          </Button>
+        </div>
+      </header>
       <div className="flex-grow container mx-auto px-2 sm:px-4 py-6 md:py-8 flex flex-col md:flex-row">
-        <aside className="w-full md:w-60 lg:w-64 p-2 md:p-4 space-y-1 border-b md:border-b-0 md:border-r mb-4 md:mb-0 md:mr-4 flex-shrink-0">
+        <aside className="w-full md:w-60 lg:w-64 p-2 md:p-4 space-y-1 border-b md:border-b-0 md:border-r mb-4 md:mb-0 md:mr-4 flex-shrink-0 bg-card rounded-lg shadow-sm">
           <nav className="flex flex-row md:flex-col gap-1">
             {adminNavLinks.map((link) => (
               <Button
@@ -73,7 +89,7 @@ export default function AdminLayout({
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-2 md:p-4 lg:p-6 bg-card rounded-lg shadow">
+        <main className="flex-1 p-4 md:p-6 bg-card rounded-lg shadow-lg">
           {children}
         </main>
       </div>

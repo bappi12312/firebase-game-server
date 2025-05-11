@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, useTransition, useActionState } from 'react';
+import { useEffect, useState, useTransition } from 'react'; // Removed useActionState as we're not using form.action
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, Controller } from 'react-hook-form';
 import type { z } from 'zod';
@@ -31,75 +31,31 @@ interface ServerSubmissionFormProps {
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth(); 
-  const [isSubmitting, startTransition] = useTransition();
+  const [isSubmittingManually, setIsSubmittingManually] = useState(false); // Renamed isPending
   const router = useRouter();
   
-  const initialState: SubmitServerFormState = { message: '', error: false, fields: {} };
-  const [state, formAction] = useActionState(submitServerAction, initialState);
+  // const initialState: SubmitServerFormState = { message: '', error: false, fields: {} };
+  // const [state, formAction] = useActionState(submitServerAction, initialState); // Not using this if manually calling action
 
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
-    defaultValues: {
-      name: state.fields?.name || '',
-      ipAddress: state.fields?.ipAddress || '',
-      port: state.fields?.port ? Number(state.fields.port) : 25565,
-      game: state.fields?.game || '',
-      description: state.fields?.description || '',
-      bannerUrl: state.fields?.bannerUrl || '',
-      logoUrl: state.fields?.logoUrl || '',
-      tags: state.fields?.tags || '',
+    defaultValues: { // Set initial default values
+      name: '',
+      ipAddress: '',
+      port: 25565, // Default port
+      game: '',
+      description: '',
+      bannerUrl: '',
+      logoUrl: '',
+      tags: '',
     },
   });
 
-  useEffect(() => {
-    if (state?.message) {
-      if (state.error) {
-        toast({
-          title: 'Submission Failed',
-          description: state.message,
-          variant: 'destructive',
-        });
-        if (state.fields) {
-          for (const [key, value] of Object.entries(state.fields)) {
-            if (key in form.getValues()) {
-                 form.setValue(key as keyof ServerFormValues, value as any);
-            }
-          }
-        }
-        if (state.errors) {
-            for (const fieldError of state.errors) {
-                form.setError(fieldError.path as keyof ServerFormValues, { message: fieldError.message });
-            }
-        }
+  // No useEffect for state from useActionState if not used directly with form.action
 
-      } else {
-        toast({
-          title: 'Success!',
-          description: state.message,
-        });
-        form.reset({ 
-          name: '',
-          ipAddress: '',
-          port: 25565,
-          game: '',
-          description: '',
-          bannerUrl: '',
-          logoUrl: '',
-          tags: '',
-        }); 
-        router.push('/dashboard'); // Redirect to dashboard on success
-      }
-    }
-  }, [state, toast, form, router]);
-
-
-  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    if (user?.uid) {
-      formData.append('userId', user.uid);
-    } else {
+  const handleFormSubmit = async (data: ServerFormValues) => { // data is now the validated form data
+    if (!user?.uid) {
       toast({
         title: "Authentication Error",
         description: "You must be logged in to submit a server.",
@@ -107,9 +63,42 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       });
       return;
     }
-    startTransition(() => {
-      formAction(formData);
+
+    setIsSubmittingManually(true);
+    
+    const formData = new FormData();
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        formData.append(key, String(value));
+      }
     });
+    formData.append('userId', user.uid);
+
+    // Manually call the server action
+    const result = await submitServerAction({ message: '', error: false }, formData); // Pass an initial state or null
+
+    setIsSubmittingManually(false);
+
+    if (result.error) {
+      toast({
+        title: 'Submission Failed',
+        description: result.message || 'Please check the form for errors.',
+        variant: 'destructive',
+      });
+      if (result.errors) {
+        result.errors.forEach(err => {
+          form.setError(err.path as keyof ServerFormValues, { message: err.message });
+        });
+      }
+    } else {
+      toast({
+        title: 'Success!',
+        description: result.message || 'Server submitted for review.',
+        variant: 'default',
+      });
+      form.reset(); 
+      router.push('/dashboard'); 
+    }
   };
 
   if (authLoading) {
@@ -154,8 +143,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         <CardDescription>Fill in the details below to list your server on ServerSpotlight.</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleFormSubmit} className="space-y-6">
-           <Form {...form}>
+         <Form {...form}>
+          {/* Use react-hook-form's handleSubmit to trigger our custom submit handler */}
+          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
             <FormField
               control={form.control}
               name="name"
@@ -203,11 +193,16 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Game</FormLabel>
+                  {/* Controller is fine here for integrating with RHF's state for non-standard inputs */}
                   <Controller
                     name="game"
                     control={form.control}
-                    render={({ field: controllerField }) => (
-                        <Select onValueChange={controllerField.onChange} value={controllerField.value} name={controllerField.name}>
+                    render={({ field: controllerField }) => ( // controllerField provides onChange, onBlur, value, name, ref
+                        <Select 
+                            onValueChange={controllerField.onChange} 
+                            value={controllerField.value} // Use value from controllerField
+                            name={controllerField.name}
+                        >
                             <FormControl>
                             <SelectTrigger>
                                 <SelectValue placeholder="Select a game" />
@@ -284,15 +279,14 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={isSubmitting || form.formState.isSubmitting}>
-                   {isSubmitting || form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-                   {isSubmitting || form.formState.isSubmitting ? 'Submitting...' : 'Submit Server'}
+                        disabled={isSubmittingManually || form.formState.isSubmitting}>
+                   {(isSubmittingManually || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                   {(isSubmittingManually || form.formState.isSubmitting) ? 'Submitting...' : 'Submit Server'}
                 </Button>
             </div>
-            </Form>
-        </form>
+            </form>
+        </Form>
       </CardContent>
     </Card>
   );
 }
-
