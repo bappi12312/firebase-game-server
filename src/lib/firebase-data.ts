@@ -1,4 +1,3 @@
-
 import {
   collection,
   addDoc,
@@ -128,11 +127,13 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
          return {
             ...data,
             uid: profileSnap.id,
-            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()),
+            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()), // Use current date as fallback for timestamp if serverTimestamp hasn't resolved
             emailVerified: data.emailVerified ?? false,
         } as UserProfile;
     }
-    
+     // This part should ideally not be reached if setDoc is successful and profileSnap is re-fetched.
+     // However, as a fallback if profileSnap.exists() is false after setDoc (highly unlikely with merge:true on a new doc).
+    console.warn("createUserProfile: profileSnap did not exist after setDoc. Returning constructed profile.");
     return {
         uid: user.uid,
         email: user.email,
@@ -201,7 +202,8 @@ export async function getFirebaseServers(
   sortBy: SortOption = 'featured',
   searchTerm: string = '',
   status: ServerStatus | 'all' = 'approved',
-  submittedByUserId?: string
+  submittedByUserId?: string,
+  count?: number // Optional count for limiting results
 ): Promise<Server[]> {
   if (!db) {
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting servers. Database service not available."));
@@ -221,14 +223,7 @@ export async function getFirebaseServers(
       qConstraints.push(where('submittedBy', '==', submittedByUserId));
     }
     
-    // Ranking Algorithm Logic:
-    // Servers with isFeatured: true and a future featuredUntil date are prioritized.
-    // If featuredUntil is null (indefinite feature), they are also prioritized.
-    // After featured status, sort by the selected 'sortBy' criteria.
-    
     qConstraints.push(orderBy('isFeatured', 'desc'));
-    // Sort by featuredUntil: nulls (indefinite) should ideally come first or be treated as "very far future"
-    // Firestore sorts nulls first with 'desc', which works here for "indefinite means always featured"
     qConstraints.push(orderBy('featuredUntil', 'desc')); 
 
     let baseOrderByField: keyof Server = 'votes';
@@ -252,9 +247,8 @@ export async function getFirebaseServers(
         baseOrderByField = 'submittedAt';
         baseOrderByDirection = 'desc';
         break;
-      case 'featured': // This case ensures 'featured' logic is primary even if explicitly chosen
-         // isFeatured and featuredUntil are already primary sorters
-        qConstraints.push(orderBy('votes', 'desc')); // Secondary sort for featured
+      case 'featured': 
+        qConstraints.push(orderBy('votes', 'desc')); 
         qConstraints.push(orderBy('playerCount', 'desc'));
         break;
       default:
@@ -262,14 +256,18 @@ export async function getFirebaseServers(
         baseOrderByDirection = 'desc';
     }
     
-    // Add the primary sort field from the switch, if not already covered by featured sort.
     if (sortBy !== 'featured' && baseOrderByField !== 'isFeatured' && baseOrderByField !== 'featuredUntil') {
       qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
     }
      
-    // Add a final tie-breaker by name if not already the primary sort or part of featured's secondary sort.
     if (baseOrderByField !== 'name' && sortBy !== 'featured') {
       qConstraints.push(orderBy('name', 'asc')); 
+    }
+
+    if (count && count > 0) {
+        qConstraints.push(limit(count));
+    } else if (count !== undefined && count <= 0) { // Explicitly handle count <= 0 if provided
+        return [];
     }
     
     const q = query(serverCollRef, ...qConstraints);
@@ -605,6 +603,9 @@ export async function getUsersCount(): Promise<number> {
 
 export async function getRecentPendingServers(count: number = 5): Promise<Server[]> {
   if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent pending servers"));
+  if (count <= 0) {
+    return [];
+  }
   try {
     const q = query(
       collection(db, 'servers'), 
@@ -627,15 +628,21 @@ export async function getRecentPendingServers(count: number = 5): Promise<Server
   }
 }
 
-export async function getRecentPendingReports(count: number = 5): Promise<Report[]> {
+export async function getRecentPendingReports(filterStatus: ReportStatus | 'all' = 'all', count: number = 5): Promise<Report[]> {
    if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent pending reports"));
+   if (count <= 0) {
+    return [];
+  }
   try {
-    const q = query(
-      collection(db, 'reports'), 
-      where('status', '==', 'pending'), 
-      orderBy('reportedAt', 'desc'), 
-      limit(count)
-    );
+    const reportsCollRef = collection(db, 'reports');
+    let qConstraints: QueryConstraint[] = [orderBy('reportedAt', 'desc')];
+    
+    if (filterStatus !== 'all') {
+      qConstraints.push(where('status', '==', filterStatus));
+    }
+    qConstraints.push(limit(count)); // Add limit after checking count
+
+    const q = query(reportsCollRef, ...qConstraints);
     const snapshot = await getDocs(q);
     return snapshot.docs.map(docSnap => {
       const data = docSnap.data();
@@ -652,6 +659,9 @@ export async function getRecentPendingReports(count: number = 5): Promise<Report
 
 export async function getRecentRegisteredUsers(count: number = 5): Promise<UserProfile[]> {
    if (!db) throw new Error(formatFirebaseError({ message: "DB not init" }, "fetching recent registered users"));
+   if (count <= 0) {
+     return [];
+   }
   try {
     const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(count));
     const snapshot = await getDocs(q);
@@ -865,9 +875,12 @@ export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'a
     if (filterStatus !== 'all') {
       qConstraints.push(where('status', '==', filterStatus));
     }
-    if (count) {
+    if (count && count > 0) { // Ensure count is positive before applying limit
       qConstraints.push(limit(count));
+    } else if (count !== undefined && count <=0) { // if count is 0 or negative, return empty
+        return [];
     }
+
     const q = query(reportsCollRef, ...qConstraints);
     const reportSnapshot = await getDocs(q);
     return reportSnapshot.docs.map(docSnap => {
