@@ -1,8 +1,7 @@
 
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
-import { useFormStatus } from 'react-dom';
+import { useActionState, useEffect, useState, useTransition } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -36,8 +35,7 @@ interface ServerSubmissionFormProps {
   games: Game[];
 }
 
-function SubmitButton() {
-  const { pending } = useFormStatus();
+function SubmitButton({ pending }: { pending: boolean }) {
   return (
     <Button type="submit" disabled={pending} className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground">
       {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -51,8 +49,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { user, loading: authLoading } = useAuth(); // Get user from AuthContext
   
   const initialState: SubmitServerFormState = { message: '', error: false };
-  // Ensure useActionState is imported from 'react'
-  const [state, formAction] = useActionState(submitServerAction, initialState);
+  const [state, formAction, isActionPending] = useActionState(submitServerAction, initialState);
+  const [isTransitionPending, startTransition] = useTransition();
+
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
@@ -106,7 +105,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         formData.append(key, String(value));
       }
     });
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   };
 
   if (authLoading) {
@@ -142,6 +143,8 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       </Card>
     );
   }
+
+  const isButtonDisabled = isActionPending || isTransitionPending || form.formState.isSubmitting;
 
   return (
     <Card className="max-w-2xl mx-auto">
@@ -273,7 +276,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               )}
             /> */}
             <div className="flex justify-end">
-                <SubmitButton />
+                <SubmitButton pending={isButtonDisabled} />
             </div>
           </form>
         </Form>
@@ -281,3 +284,4 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
+
