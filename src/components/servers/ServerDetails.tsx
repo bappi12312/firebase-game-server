@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 
 
@@ -21,6 +21,15 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
   const [server, setServer] = useState(initialServer);
   const [isPending, startTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
+  const [timeAgo, setTimeAgo] = useState<string>('N/A');
+
+  useEffect(() => {
+    if (server.submittedAt) {
+      setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
+    } else {
+      setTimeAgo('N/A');
+    }
+  }, [server.submittedAt]);
 
   const handleCopyIp = () => {
     navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
@@ -54,7 +63,6 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
     setTimeout(() => setVotedRecently(false), 60000); 
   };
   
-  const timeAgo = server.submittedAt ? formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }) : 'N/A';
 
   return (
     <Card className="overflow-hidden">
