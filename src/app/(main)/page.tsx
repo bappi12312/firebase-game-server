@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -7,42 +8,46 @@ import { ServerList } from '@/components/servers/ServerList';
 import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ServerCrash, WifiOff } from 'lucide-react';
+import { ServerCrash, WifiOff, ShieldAlert } from 'lucide-react';
 import { auth, db } from '@/lib/firebase'; 
+import { useAuth } from '@/context/AuthContext';
+
 
 export default function HomePage() {
   const [allServers, setAllServers] = useState<Server[]>([]);
   const [games, setGames] = useState<Game[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { authError } = useAuth(); // Get authError from context
   
   const [searchTerm, setSearchTerm] = useState('');
   const [gameFilter, setGameFilter] = useState('all');
-  const [sortBy, setSortBy] = useState<SortOption>('votes'); // Default sort by votes
+  const [sortBy, setSortBy] = useState<SortOption>('votes');
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     if (!auth || !db) {
-      setError("Firebase is not configured correctly. Please check the console and ensure your .env.local file has the correct Firebase credentials.");
+      const configError = "Firebase is not configured correctly. Please check the console and ensure your .env.local file has the correct Firebase credentials.";
+      setError(configError);
       setIsLoading(false);
       console.error("Firebase auth or db is not initialized. Check firebase.ts and .env.local.");
-      console.log("NEXT_PUBLIC_FIREBASE_PROJECT_ID:", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ? "Set" : "Not Set");
       return;
     }
 
     try {
       const gamesData = await getFirebaseGames();
       setGames(gamesData);
-
-      // getFirebaseServers handles filtering by searchTerm and sorting by sortBy
       const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
       setAllServers(serversData);
-
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load data:", err);
-      setError("Could not load server data. Please try again later.");
+      let friendlyError = "Could not load server data. Please try again later.";
+      if (err.message && err.message.toLowerCase().includes('permission denied')) {
+        friendlyError = "Could not load server data due to a permission issue. This might be a misconfiguration. Please contact support or check Firestore security rules.";
+      }
+      setError(friendlyError);
     } finally {
       setIsLoading(false);
     }
@@ -53,7 +58,13 @@ export default function HomePage() {
     loadData();
   }, [loadData]);
 
-  // `allServers` is now the definitive list, already filtered and sorted by `getFirebaseServers`
+  useEffect(() => {
+    if (authError) {
+      setError(prevError => authError + (prevError ? ` | ${prevError}` : ''));
+    }
+  }, [authError]);
+
+
   const displayedServers = allServers;
 
   if (isLoading) {
@@ -76,21 +87,32 @@ export default function HomePage() {
   }
 
   if (error) {
+    let IconComponent = ServerCrash;
+    let title = "Error Loading Servers";
+    if (error.includes("Firebase is not configured")) {
+        IconComponent = WifiOff;
+        title = "Configuration Issue";
+    } else if (error.toLowerCase().includes("permission denied")) {
+        IconComponent = ShieldAlert;
+        title = "Permission Issue";
+    }
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
          <Alert variant="destructive" className="w-full max-w-lg">
-          {error.includes("Firebase is not configured") ? <WifiOff className="h-5 w-5" /> : <ServerCrash className="h-5 w-5" />}
-          <AlertTitle>{error.includes("Firebase is not configured") ? "Configuration Issue" : "Error Loading Servers"}</AlertTitle>
+          <IconComponent className="h-5 w-5" />
+          <AlertTitle>{title}</AlertTitle>
           <AlertDescription>
             {error}
-            {!error.includes("Firebase is not configured") && " Please check your internet connection or try again later."}
+            {!error.includes("Firebase is not configured") && !error.toLowerCase().includes("permission denied") && " Please check your internet connection or try again later."}
+            {error.toLowerCase().includes("permission denied") && " Please check your Firestore security rules or contact support."}
           </AlertDescription>
         </Alert>
       </div>
     );
   }
   
-  if (!auth || !db) {
+  if (!auth || !db) { // This check is somewhat redundant if error above catches it, but good fallback
      return (
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
          <Alert variant="destructive" className="w-full max-w-lg">
