@@ -24,59 +24,66 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [_loadingInternal, _setLoadingInternal] = useState(true); // Internal loading state
   const [isAdmin, setIsAdmin] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const updateAuthContextProfile = useCallback((newProfileData: Partial<UserProfile>) => {
     setUserProfile(prevProfile => {
-      // If prevProfile is null, we might be setting initial profile data based on newProfileData
-      // but ensure uid and email are preserved if they exist on newProfileData or a fresh user.
-      // This typically happens after a successful profile update action.
-      const currentUid = user?.uid; // Get current user's UID if available
-      const currentEmail = user?.email; // Get current user's email
+      const currentAuthUser = auth?.currentUser; // Use auth.currentUser directly if needed for base
+      const baseUid = prevProfile?.uid || currentAuthUser?.uid;
+      const baseEmail = prevProfile?.email || currentAuthUser?.email;
 
-      const baseProfile: Partial<UserProfile> = prevProfile ?? { uid: currentUid, email: currentEmail };
+      const baseProfile: Partial<UserProfile> = prevProfile ?? { uid: baseUid, email: baseEmail };
       
       return { ...baseProfile, ...newProfileData } as UserProfile;
     });
     if (newProfileData.role !== undefined) {
         setIsAdmin(newProfileData.role === 'admin');
     }
-  }, [user]); // Keep user dependency if uid/email from current auth state is desired for base
+  }, []); // Removed `user` dependency as currentAuthUser is used if needed
 
 
   useEffect(() => {
+    if (!isMounted) {
+        return; // Don't run auth listener until client has mounted
+    }
+
     if (!auth) { 
       const errorMsg = "AuthContext: Firebase Auth is not initialized. User authentication will not work.";
       console.warn(errorMsg);
       setAuthError(errorMsg);
-      setLoading(false);
+      _setLoadingInternal(false);
       return; 
     }
+    
     setAuthError(null); 
-
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
         try {
           let profile = await getUserProfile(currentUser.uid);
           if (!profile && db) { 
-            // console.log(`AuthContext: Profile not found for ${currentUser.uid}, attempting to create.`);
             profile = await createUserProfile(currentUser);
-            // console.log(`AuthContext: Profile creation attempt for ${currentUser.uid} resulted in:`, profile);
           }
-          setUserProfile(profile);
-          setIsAdmin(profile?.role === 'admin');
+          // Use updateAuthContextProfile to set/update profile
+          // Ensure profile is not undefined when passing
+          updateAuthContextProfile(profile || { uid: currentUser.uid, email: currentUser.email, displayName: currentUser.displayName, photoURL: currentUser.photoURL });
+          setIsAdmin(profile?.role === 'admin'); // setIsAdmin based on fetched/created profile
           setAuthError(null);
         } catch (error: any) {
-          // console.error("AuthContext: Error fetching/creating user profile:", error); 
           let detailedError = error.message || "An unexpected error occurred while fetching user profile.";
           if (error.message && error.message.toLowerCase().includes('permission denied')) {
              detailedError = `Failed to initialize user profile due to Firestore permissions. Please ensure your Firestore security rules allow users to be created in the 'users' collection. (Details: ${error.message})`;
           }
+          console.error("AuthContext: Error fetching/creating user profile:", detailedError, error);
           setAuthError(detailedError);
-          setUserProfile(null);
+          setUserProfile(null); // Explicitly nullify profile on error
           setIsAdmin(false);
         }
       } else {
@@ -84,12 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsAdmin(false);
         setAuthError(null);
       }
-      setLoading(false);
+      _setLoadingInternal(false);
     });
     return () => unsubscribe();
-  }, []); // Empty dependency array: setup subscription only once.
+  }, [isMounted, updateAuthContextProfile]); 
 
-  if (loading && typeof window !== 'undefined') { // Check for window to avoid SSR rendering of skeleton if not needed
+  // Render skeleton if not mounted or if internal loading is true
+  if (!isMounted || _loadingInternal) {
     return (
       <div className="flex flex-col min-h-screen">
         <header className="bg-primary text-primary-foreground shadow-md sticky top-0 z-50">
@@ -106,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, userProfile, loading, isAdmin, updateAuthContextProfile, authError }}>
+    <AuthContext.Provider value={{ user, userProfile, loading: _loadingInternal, isAdmin, updateAuthContextProfile, authError }}>
       {children}
     </AuthContext.Provider>
   );
@@ -119,3 +127,4 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
+

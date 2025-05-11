@@ -24,7 +24,7 @@ export default function MainLayout({
       </main>
       <footer className="bg-secondary text-secondary-foreground py-6 text-center text-sm">
         <div className="container mx-auto px-4">
-          <p>
+          <p suppressHydrationWarning>
             &copy; {currentYear !== null ? currentYear : ''} ServerSpotlight. All rights reserved.
           </p>
           {/* Add more footer links if needed, e.g., Privacy Policy, Terms of Service */}
@@ -34,3 +34,4 @@ export default function MainLayout({
     </div>
   );
 }
+
