@@ -1,4 +1,4 @@
-import type { FieldValue } from 'firebase/firestore';
+import type { FieldValue, Timestamp } from 'firebase/firestore';
 
 export type ServerStatus = 'pending' | 'approved' | 'rejected';
 
@@ -17,9 +17,11 @@ export interface Server {
   isOnline: boolean;
   votes: number;
   submittedBy?: string; 
-  submittedAt: string | FieldValue; // Can be ISO string or ServerTimestamp
-  lastVotedAt?: string | FieldValue; // Can be ISO string or ServerTimestamp
+  submittedAt: string; // Always ISO string after fetch
+  lastVotedAt?: string | null; // Always ISO string or null after fetch
   status: ServerStatus; 
+  isFeatured?: boolean;
+  featuredUntil?: string | null; // ISO string date or null
 }
 
 export interface Game {
@@ -27,7 +29,7 @@ export interface Game {
   name: string;
 }
 
-export type SortOption = 'votes' | 'playerCount' | 'name' | 'submittedAt';
+export type SortOption = 'votes' | 'playerCount' | 'name' | 'submittedAt' | 'featured';
 
 export interface UserProfile {
   uid: string;
@@ -35,7 +37,7 @@ export interface UserProfile {
   displayName: string | null;
   photoURL?: string | null;
   role?: 'user' | 'admin'; 
-  createdAt?: string | FieldValue; // Can be ISO string or ServerTimestamp
+  createdAt?: string; // Always ISO string after fetch
   emailVerified?: boolean;
 }
 
@@ -43,3 +45,4 @@ export interface VotedServerInfo {
   server: Server;
   votedAt: string; // ISO string date of the last vote by the user
 }
+

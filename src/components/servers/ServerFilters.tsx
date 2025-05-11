@@ -1,9 +1,10 @@
+
 'use client';
 
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Game, SortOption } from '@/lib/types';
-import { Search, ListFilter, ArrowDownUp } from 'lucide-react';
+import { Search, ListFilter, ArrowDownUp, Star } from 'lucide-react';
 
 interface ServerFiltersProps {
   games: Game[];
@@ -70,6 +71,11 @@ export function ServerFilters({
               <SelectValue placeholder="Sort by..." />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="featured">
+                <div className="flex items-center">
+                  <Star className="w-4 h-4 mr-2 text-yellow-500 fill-yellow-500" /> Featured
+                </div>
+              </SelectItem>
               <SelectItem value="votes">Votes</SelectItem>
               <SelectItem value="playerCount">Player Count</SelectItem>
               <SelectItem value="name">Name</SelectItem>

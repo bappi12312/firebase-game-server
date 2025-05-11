@@ -3,7 +3,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, ExternalLink, AlertCircle, Loader2, Star } from 'lucide-react';
 import type { Server } from '@/lib/types';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ import { useState, useTransition, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
+import { cn } from '@/lib/utils';
+import { formatDistanceToNow } from 'date-fns';
 
 interface ServerCardProps {
   server: Server;
@@ -39,7 +41,6 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
       try {
         const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
         setServerData(prevServer => ({ ...prevServer, ...stats }));
-        // Update Firestore with the new stats (fire-and-forget)
         updateServerStatsInFirestore(serverData.id, stats)
           .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
       } catch (error) {
@@ -57,12 +58,12 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
       }));
       setIsLoadingStats(false);
     }
-  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name]); // Removed initialServer dependency as we use serverData internal state
+  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name]); 
 
 
   useEffect(() => {
     fetchStats(); 
-    const intervalId = setInterval(fetchStats, 60000); // Refresh every 60 seconds
+    const intervalId = setInterval(fetchStats, 60000); 
     return () => clearInterval(intervalId);
   }, [fetchStats]);
 
@@ -82,7 +83,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
 
     startTransition(async () => {
       try {
-        const result = await voteAction(serverData.id, user.uid); // Pass user.uid
+        const result = await voteAction(serverData.id, user.uid); 
         if (result.success && result.newVotes !== undefined) {
           toast({
             title: 'Vote Cast!',
@@ -113,9 +114,12 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   const voteButtonDisabled = isPending || votedRecently || authLoading;
   const voteButtonText = authLoading ? <Loader2 className="animate-spin" /> : (isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote'));
 
+  const isCurrentlyFeatured = serverData.isFeatured && serverData.featuredUntil && new Date(serverData.featuredUntil) > new Date();
+  const isIndefinitelyFeatured = serverData.isFeatured && !serverData.featuredUntil;
+
 
   return (
-    <Card className="flex flex-col h-full overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 bg-card">
+    <Card className={cn("flex flex-col h-full overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 bg-card", (isCurrentlyFeatured || isIndefinitelyFeatured) && "border-2 border-yellow-400 ring-2 ring-yellow-400/50")}>
       <CardHeader className="p-0 relative">
         {serverData.bannerUrl ? (
           <Image
@@ -144,6 +148,11 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 unoptimized={serverData.logoUrl.startsWith('http://')}
             />
            </div>
+        )}
+         {(isCurrentlyFeatured || isIndefinitelyFeatured) && (
+          <Badge variant="default" className="absolute top-2 right-2 bg-yellow-400 text-yellow-900 hover:bg-yellow-500 shadow-md">
+            <Star className="w-3 h-3 mr-1 fill-yellow-900" /> Featured
+          </Badge>
         )}
       </CardHeader>
       <CardContent className="p-4 flex-grow">
@@ -175,6 +184,16 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
           </div>
           <p className="line-clamp-2 text-foreground/80">{serverData.description}</p>
         </div>
+         {(isCurrentlyFeatured && serverData.featuredUntil) && (
+            <p className="text-xs text-yellow-600 mt-2">
+              Featured until {formatDistanceToNow(new Date(serverData.featuredUntil), { addSuffix: true })}
+            </p>
+          )}
+          {isIndefinitelyFeatured && (
+            <p className="text-xs text-yellow-600 mt-2">
+              Featured
+            </p>
+          )}
       </CardContent>
       <CardFooter className="p-4 flex items-center justify-between border-t border-border/50 mt-auto">
         <div className="flex items-center gap-1 text-accent">
@@ -218,3 +237,4 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
     </Card>
   );
 }
+

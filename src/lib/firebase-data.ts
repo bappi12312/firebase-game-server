@@ -60,6 +60,21 @@ function formatFirebaseError(error: any, context: string): string {
   return message; 
 }
 
+const toISODateString = (timestamp: Timestamp | FieldValue | undefined | null): string | null => {
+  if (timestamp instanceof Timestamp) {
+    return timestamp.toDate().toISOString();
+  }
+  return null;
+};
+
+const toRequiredISODateString = (timestamp: Timestamp | FieldValue | undefined | null, fallback = new Date(0).toISOString()): string => {
+  if (timestamp instanceof Timestamp) {
+    return timestamp.toDate().toISOString();
+  }
+  return fallback;
+};
+
+
 // --- User Profile Functions ---
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   if (!db) {
@@ -73,7 +88,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
       return {
         ...data,
         uid: docSnap.id,
-        createdAt: (data.createdAt instanceof Timestamp) ? data.createdAt.toDate().toISOString() : undefined,
+        createdAt: toRequiredISODateString(data.createdAt),
         emailVerified: data.emailVerified ?? false, 
       } as UserProfile;
     }
@@ -106,7 +121,19 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     const userDocRef = doc(db, 'users', user.uid);
     await setDoc(userDocRef, userProfileData, { merge: true }); 
     
-    const createdProfileForReturn: UserProfile = {
+    // Fetch the just created profile to get the server-generated timestamp correctly converted
+    const profileSnap = await getDoc(userDocRef);
+    if (profileSnap.exists()) {
+        const data = profileSnap.data();
+         return {
+            ...data,
+            uid: profileSnap.id,
+            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()), // Use current date as fallback for immediate return
+            emailVerified: data.emailVerified ?? false,
+        } as UserProfile;
+    }
+    // Fallback, should ideally not be reached if setDoc is successful and data is written
+    return {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName,
@@ -115,7 +142,6 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
         createdAt: new Date().toISOString(), 
         emailVerified: user.emailVerified,
     };
-    return createdProfileForReturn;
 
   } catch (error: any) {
      if (error.code === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
@@ -184,12 +210,22 @@ export async function getFirebaseServers(
     
     if (status !== 'all') {
       qConstraints.push(where('status', '==', status));
+    } else {
+      // If fetching 'all' statuses, and not sorting by 'featured', it's generally fine.
+      // If sorting by 'featured', we might need to reconsider how 'all' status interacts or fetch in stages.
+      // For now, assume 'all' means any status.
     }
+
     if (gameFilter !== 'all') {
       qConstraints.push(where('game', '==', gameFilter));
     }
-    if (submittedByUserId) { // Filter by submittedBy if provided
+    if (submittedByUserId) { 
       qConstraints.push(where('submittedBy', '==', submittedByUserId));
+    }
+    
+    // Prioritize featured servers for all sorts if status is 'approved' or 'all'
+    if (status === 'approved' || status === 'all') {
+        qConstraints.push(orderBy('isFeatured', 'desc'));
     }
 
 
@@ -202,12 +238,7 @@ export async function getFirebaseServers(
         baseOrderByDirection = 'desc';
         break;
       case 'playerCount':
-        // For player count, we also want online servers first.
-        // Firestore requires the first orderBy to match the inequality filter if any.
-        // If no inequality filter on 'isOnline', we can sort by 'isOnline' then 'playerCount'.
-        // Check if status filter is active, if so, that's the first order by constraint by Firestore rules if it's on a different field than inequality.
-        // However, isOnline is boolean, not range/inequality in the typical sense that conflicts.
-        if (status === 'all' || status === 'approved') { // Only makes sense for approved or all servers
+        if (status === 'all' || status === 'approved') {
            qConstraints.push(orderBy('isOnline', 'desc')); 
         }
         baseOrderByField = 'playerCount'; 
@@ -221,17 +252,22 @@ export async function getFirebaseServers(
         baseOrderByField = 'submittedAt';
         baseOrderByDirection = 'desc';
         break;
+      case 'featured': // If sorting explicitly by featured, isFeatured is already primary. Add secondary sort.
+        baseOrderByField = 'votes'; // Example: featured servers sorted by votes
+        baseOrderByDirection = 'desc';
+        break;
       default: 
         baseOrderByField = 'votes';
         baseOrderByDirection = 'desc';
     }
     
-    qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
-     // If baseOrderByField is not '__name__', Firestore implicitly adds it as a final tie-breaker.
-    // If we are sorting by 'name' asc, we don't need to add it again.
-    // For other sorts, and to ensure stable pagination if implemented later, explicit name ordering is good.
+    // Add the main sorting field, ensuring it's not 'isFeatured' if already added.
+    if (baseOrderByField !== 'isFeatured') {
+        qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
+    }
+     
     if (baseOrderByField !== 'name') {
-        qConstraints.push(orderBy('name', 'asc')); // Secondary sort for consistency
+        qConstraints.push(orderBy('name', 'asc')); 
     }
     
     const q = query(serverCollRef, ...qConstraints);
@@ -242,8 +278,9 @@ export async function getFirebaseServers(
       return {
         id: docSnap.id,
         ...data,
-        submittedAt: (data.submittedAt instanceof Timestamp) ? data.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-        lastVotedAt: (data.lastVotedAt instanceof Timestamp) ? data.lastVotedAt.toDate().toISOString() : undefined,
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
       } as Server;
     });
 
@@ -277,8 +314,9 @@ export async function getFirebaseServerById(id: string): Promise<Server | null> 
       return {
         id: docSnap.id,
         ...data,
-        submittedAt: (data.submittedAt instanceof Timestamp) ? data.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-        lastVotedAt: (data.lastVotedAt instanceof Timestamp) ? data.lastVotedAt.toDate().toISOString() : undefined,
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
       } as Server;
     } else {
       return null;
@@ -314,6 +352,8 @@ export async function addFirebaseServer(
     submittedBy: serverDataInput.submittedBy,
     bannerUrl: (serverDataInput.bannerUrl && serverDataInput.bannerUrl.trim() !== '') ? serverDataInput.bannerUrl : null,
     logoUrl: (serverDataInput.logoUrl && serverDataInput.logoUrl.trim() !== '') ? serverDataInput.logoUrl : null,
+    isFeatured: false,
+    featuredUntil: null,
   };
   
   try {
@@ -328,8 +368,9 @@ export async function addFirebaseServer(
     return { 
       id: docRef.id,
       ...finalData,
-      submittedAt: (finalData.submittedAt instanceof Timestamp) ? finalData.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-      lastVotedAt: (finalData.lastVotedAt instanceof Timestamp) ? finalData.lastVotedAt.toDate().toISOString() : undefined,
+      submittedAt: toRequiredISODateString(finalData.submittedAt, new Date().toISOString()),
+      lastVotedAt: toISODateString(finalData.lastVotedAt),
+      featuredUntil: toISODateString(finalData.featuredUntil),
      } as Server;
   } catch (error) {
     throw new Error(formatFirebaseError(error, "adding Firebase server"));
@@ -385,8 +426,9 @@ export async function voteForFirebaseServer(id: string, userId: string): Promise
       return {
         id: updatedDocSnap.id,
         ...data,
-        submittedAt: (data.submittedAt instanceof Timestamp) ? data.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-        lastVotedAt: (data.lastVotedAt instanceof Timestamp) ? data.lastVotedAt.toDate().toISOString() : undefined,
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
       } as Server;
     }
     return null;
@@ -410,8 +452,9 @@ export async function updateFirebaseServerStatus(id: string, status: ServerStatu
       return {
         id: updatedDocSnap.id,
         ...data,
-        submittedAt: (data.submittedAt instanceof Timestamp) ? data.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-        lastVotedAt: (data.lastVotedAt instanceof Timestamp) ? data.lastVotedAt.toDate().toISOString() : undefined,
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
       } as Server;
     }
     return null;
@@ -456,16 +499,6 @@ const staticGames: Game[] = [
 export async function getFirebaseGames(): Promise<Game[]> {
   // Simulate fetching games from Firestore if they were dynamic
   // For now, returning static list
-  // if (!db) {
-  //   throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting games. Database service not available."));
-  // }
-  // try {
-  //   const gamesSnapshot = await getDocs(collection(db, "games"));
-  //   return gamesSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as Game));
-  // } catch (error) {
-  //   console.error("Error fetching games from Firestore, returning static list:", error);
-  //   return [...staticGames]; // Fallback to static list on error
-  // }
   return Promise.resolve([...staticGames]);
 }
 
@@ -482,7 +515,7 @@ export async function getAllFirebaseUsers(): Promise<UserProfile[]> {
         return {
             ...data,
             uid: docSnap.id, 
-            createdAt: (data.createdAt instanceof Timestamp) ? data.createdAt.toDate().toISOString() : undefined, 
+            createdAt: toRequiredISODateString(data.createdAt), 
             emailVerified: data.emailVerified ?? false,
         } as UserProfile
     });
@@ -572,62 +605,29 @@ export async function updateServerStatsInFirestore(
   const serverRef = doc(db, 'servers', serverId);
   
   try {
-    const serverSnap = await getDoc(serverRef); // Check if server exists and its status
+    const serverSnap = await getDoc(serverRef); 
     if (!serverSnap.exists()) {
       console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
       return;
     }
     const serverData = serverSnap.data() as Server;
-    if(serverData.status !== 'approved') { // Only update stats for approved servers
-        // console.log(`updateServerStatsInFirestore: Server ${serverId} is not approved. Skipping stat update.`);
+    if(serverData.status !== 'approved') { 
         return;
     }
 
     const updatePayload: Partial<Server> = {
       isOnline: statsToUpdate.isOnline,
-      playerCount: statsToUpdate.playerCount ?? 0, // Fallback to 0 if undefined
+      playerCount: statsToUpdate.playerCount ?? 0, 
     };
     if (statsToUpdate.maxPlayers !== undefined) {
       updatePayload.maxPlayers = statsToUpdate.maxPlayers;
     }
-    // If maxPlayers is not in statsToUpdate, it will remain unchanged in Firestore.
-
-    await updateDoc(serverRef, updatePayload as { [x: string]: any }); // Type assertion for updateDoc
-    // console.log(`Successfully updated stats for server ${serverId} in Firestore.`);
+    
+    await updateDoc(serverRef, updatePayload as { [x: string]: any }); 
   } catch (error) {
     console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
-    // Optionally, mark as offline in Firestore if stat update itself fails,
-    // but this might conflict if the error was transient and server is actually online.
-    // Consider if this fallback is desired.
-    // await updateDoc(serverRef, { isOnline: false, playerCount: 0 })
-    //   .catch(e => console.error(formatFirebaseError(e, `marking server ${serverId} offline after stat update error`)));
   }
 }
-
-
-// This function could be used to periodically refresh server listings with live stats.
-// However, calling this for every server on every page load might be expensive.
-// Better to update stats individually or via background process.
-export async function fetchAndRefreshServerListings(
-  gameFilter: string = 'all', 
-  sortBy: SortOption = 'votes', 
-  searchTerm: string = ''
-): Promise<Server[]> {
-  const servers = await getFirebaseServers(gameFilter, sortBy, searchTerm, 'approved');
-  // For each server, you could fetch live stats. This is an N+1 problem if not careful.
-  // const serversWithLiveStats = await Promise.all(
-  //   servers.map(async (server) => {
-  //     if (server.status === 'approved') {
-  //       const liveStats = await getServerOnlineStatus(server.ipAddress, server.port);
-  //       return { ...server, ...liveStats };
-  //     }
-  //     return server;
-  //   })
-  // );
-  // return serversWithLiveStats;
-  return servers; // Return without live refresh for now to avoid performance issues on list view
-}
-
 
 export async function getUserVotedServerDetails(userId: string): Promise<VotedServerInfo[]> {
   if (!db) {
@@ -643,13 +643,12 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
 
     const votedServerEntries = votesSnapshot.docs.map(docSnap => ({
       serverId: docSnap.id,
-      votedAt: (docSnap.data().votedAt as Timestamp).toDate().toISOString(),
+      votedAt: toRequiredISODateString(docSnap.data().votedAt as Timestamp),
     }));
 
     const serverIds = votedServerEntries.map(entry => entry.serverId);
     const votedServersDetails: VotedServerInfo[] = [];
 
-    // Firestore 'in' query limit is 30 items. Batch if necessary.
     const batchSize = 30;
     for (let i = 0; i < serverIds.length; i += batchSize) {
       const serverIdsBatch = serverIds.slice(i, i + batchSize);
@@ -659,29 +658,31 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
       const serversSnapshot = await getDocs(serversQuery);
 
       serversSnapshot.forEach(serverDoc => {
-        const serverData = serverDoc.data(); // No 'as Server' yet
-        if (serverData) { // Ensure serverData is not undefined
+        const serverData = serverDoc.data(); 
+        if (serverData) { 
             const voteEntry = votedServerEntries.find(entry => entry.serverId === serverDoc.id);
             if (voteEntry) {
             votedServersDetails.push({
                 server: {
-                id: serverDoc.id,
-                name: serverData.name,
-                ipAddress: serverData.ipAddress,
-                port: serverData.port,
-                game: serverData.game,
-                description: serverData.description,
-                tags: serverData.tags || [],
-                playerCount: serverData.playerCount ?? 0,
-                maxPlayers: serverData.maxPlayers ?? 0,
-                isOnline: serverData.isOnline ?? false,
-                votes: serverData.votes ?? 0,
-                status: serverData.status as ServerStatus,
-                bannerUrl: serverData.bannerUrl,
-                logoUrl: serverData.logoUrl,
-                submittedBy: serverData.submittedBy,
-                submittedAt: (serverData.submittedAt instanceof Timestamp) ? serverData.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-                lastVotedAt: (serverData.lastVotedAt instanceof Timestamp) ? serverData.lastVotedAt.toDate().toISOString() : undefined,
+                  id: serverDoc.id,
+                  name: serverData.name,
+                  ipAddress: serverData.ipAddress,
+                  port: serverData.port,
+                  game: serverData.game,
+                  description: serverData.description,
+                  tags: serverData.tags || [],
+                  playerCount: serverData.playerCount ?? 0,
+                  maxPlayers: serverData.maxPlayers ?? 0,
+                  isOnline: serverData.isOnline ?? false,
+                  votes: serverData.votes ?? 0,
+                  status: serverData.status as ServerStatus,
+                  bannerUrl: serverData.bannerUrl,
+                  logoUrl: serverData.logoUrl,
+                  submittedBy: serverData.submittedBy,
+                  submittedAt: toRequiredISODateString(serverData.submittedAt),
+                  lastVotedAt: toISODateString(serverData.lastVotedAt),
+                  isFeatured: serverData.isFeatured ?? false,
+                  featuredUntil: toISODateString(serverData.featuredUntil),
                 },
                 votedAt: voteEntry.votedAt,
             });
@@ -690,7 +691,6 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
       });
     }
     
-    // Sort by most recent vote
     votedServersDetails.sort((a, b) => new Date(b.votedAt).getTime() - new Date(a.votedAt).getTime());
 
     return votedServersDetails;
@@ -699,32 +699,57 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
   }
 }
 
-// Function to initialize games in Firestore (run once or as needed by admin)
-export async function initializeStaticGamesInFirestore() {
+
+export async function updateServerFeaturedStatus(
+  serverId: string,
+  isFeatured: boolean,
+  durationDays?: number
+): Promise<Server | null> {
   if (!db) {
-    console.error("Firestore (db) is not initialized. Cannot initialize games.");
-    return;
+    throw new Error(
+      formatFirebaseError(
+        { message: "Firestore (db) is not initialized." },
+        "updating server featured status. Database service not available."
+      )
+    );
   }
   try {
-    const gamesCollectionRef = collection(db, 'games');
-    const batch = writeBatch(db);
-    
-    // Check if games already exist to avoid duplicates (simple check by ID)
-    const existingGamesSnapshot = await getDocs(query(gamesCollectionRef, where(documentId(), 'in', staticGames.map(g => g.id))));
-    const existingGameIds = new Set(existingGamesSnapshot.docs.map(doc => doc.id));
+    const serverDocRef = doc(db, "servers", serverId);
+    const updates: Partial<Server> & { featuredUntil?: FieldValue | null } = {
+      isFeatured,
+    };
 
-    staticGames.forEach(game => {
-      if (!existingGameIds.has(game.id)) {
-        const gameDocRef = doc(gamesCollectionRef, game.id); // Use predefined ID
-        batch.set(gameDocRef, { name: game.name });
-      }
-    });
-    await batch.commit();
-    console.log("Static games initialized/updated in Firestore.");
+    if (isFeatured && durationDays && durationDays > 0) {
+      const featuredUntilDate = new Date();
+      featuredUntilDate.setDate(featuredUntilDate.getDate() + durationDays);
+      updates.featuredUntil = Timestamp.fromDate(featuredUntilDate) as any; // Store as Timestamp
+    } else if (!isFeatured) {
+      updates.featuredUntil = null; // Explicitly set to null if unfeaturing
+    } else if (isFeatured && !durationDays){ // Feature indefinitely if no duration
+        updates.featuredUntil = null; // Or a specific far future date, but null implies indefinite
+    }
+
+
+    await updateDoc(serverDocRef, updates);
+
+    const updatedDocSnap = await getDoc(serverDocRef);
+    if (updatedDocSnap.exists()) {
+      const data = updatedDocSnap.data();
+      return {
+        id: updatedDocSnap.id,
+        ...data,
+        submittedAt: toRequiredISODateString(data.submittedAt),
+        lastVotedAt: toISODateString(data.lastVotedAt),
+        featuredUntil: toISODateString(data.featuredUntil),
+      } as Server;
+    }
+    return null;
   } catch (error) {
-    console.error("Error initializing static games in Firestore:", formatFirebaseError(error, "initializing games"));
+    throw new Error(
+      formatFirebaseError(
+        error,
+        `updating featured status for server (${serverId})`
+      )
+    );
   }
 }
-// Example: Call this once if needed, e.g., from an admin utility or on app startup (carefully)
-// initializeStaticGamesInFirestore();
-

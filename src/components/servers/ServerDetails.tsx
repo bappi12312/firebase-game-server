@@ -6,11 +6,11 @@ import type { Server } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2 } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2, Star, CalendarClock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect, useCallback } from 'react';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -35,7 +35,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   }, [initialServerData]);
 
   useEffect(() => {
-    if (server.submittedAt && typeof server.submittedAt === 'string') { // Check if string before parsing
+    if (server.submittedAt && typeof server.submittedAt === 'string') { 
       try {
         setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
       } catch (e) {
@@ -53,7 +53,6 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         try {
             const stats = await getServerOnlineStatus(server.ipAddress, server.port);
             setServer(prevServer => ({ ...prevServer, ...stats }));
-            // Update Firestore with the new stats (fire-and-forget)
             updateServerStatsInFirestore(server.id, stats)
                 .catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
         } catch (error) {
@@ -63,14 +62,13 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             setIsLoadingStats(false);
         }
     } else {
-        // For non-approved or servers without IP/Port, reflect current data or defaults
         setIsLoadingStats(false); 
     }
   }, [server.id, server.ipAddress, server.port, server.status, server.name]);
 
   useEffect(() => {
     fetchAndUpdateStats();
-    const intervalId = setInterval(fetchAndUpdateStats, 30000); // Refresh stats every 30 seconds
+    const intervalId = setInterval(fetchAndUpdateStats, 30000); 
     return () => clearInterval(intervalId);
   }, [fetchAndUpdateStats]);
 
@@ -110,7 +108,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
     startVoteTransition(async () => {
       try {
-        const result = await voteAction(server.id, user.uid); // Pass user.uid
+        const result = await voteAction(server.id, user.uid); 
         if (result.success && result.newVotes !== undefined) {
           toast({
             title: 'Vote Cast!',
@@ -139,6 +137,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   
   const voteButtonDisabled = isVotePending || votedRecently || authLoading;
   const voteButtonText = isVotePending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
+
+  const isCurrentlyFeatured = server.isFeatured && server.featuredUntil && new Date(server.featuredUntil) > new Date();
+  const isIndefinitelyFeatured = server.isFeatured && !server.featuredUntil;
 
   return (
     <Card className="overflow-hidden shadow-xl">
@@ -171,6 +172,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 unoptimized={server.logoUrl.startsWith('http://')}
             />
            </div>
+        )}
+        {(isCurrentlyFeatured || isIndefinitelyFeatured) && (
+          <Badge variant="default" className="absolute top-4 right-4 bg-yellow-400 text-yellow-900 hover:bg-yellow-500 shadow-lg text-sm px-3 py-1">
+            <Star className="w-4 h-4 mr-1.5 fill-yellow-900" /> Featured
+          </Badge>
         )}
       </CardHeader>
       <CardContent className="p-6 space-y-6">
@@ -212,6 +218,12 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
           {server.status !== 'approved' && (
             <InfoCard Icon={AlertCircle} label="Server Status" value={server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown'} iconClassName={server.status === 'pending' ? 'text-yellow-500' : server.status === 'rejected' ? 'text-red-500' : 'text-muted-foreground'} />
           )}
+           {(isCurrentlyFeatured && server.featuredUntil) && (
+             <InfoCard Icon={CalendarClock} label="Featured Until" value={format(new Date(server.featuredUntil), "PP")} iconClassName="text-yellow-500" />
+           )}
+           {isIndefinitelyFeatured && (
+             <InfoCard Icon={Star} label="Featured" value="Active" iconClassName="text-yellow-500 fill-yellow-500" />
+           )}
         </div>
         
         <div>
@@ -229,6 +241,24 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             </div>
           </div>
         )}
+
+        {/* Placeholder for PayPal integration - Promote Server button */}
+        {server.status === 'approved' && !server.isFeatured && (
+          <div className="mt-6 border-t pt-6">
+            <h3 className="text-xl font-semibold mb-2 text-primary">Promote Your Server</h3>
+            <p className="text-muted-foreground mb-3">
+              Want to get more visibility? Feature your server on our list!
+            </p>
+            <Button 
+              size="lg" 
+              className="bg-yellow-500 hover:bg-yellow-600 text-yellow-950"
+              onClick={() => toast({ title: "Coming Soon!", description: "PayPal integration for server promotion is under development."})}
+            >
+              <Star className="w-5 h-5 mr-2 fill-current" /> Feature This Server
+            </Button>
+          </div>
+        )}
+
       </CardContent>
       {server.status === 'approved' && (
         <CardFooter className="p-6 bg-secondary/30">
@@ -240,7 +270,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     <span>
                         <Button 
                         onClick={handleVote} 
-                        disabled={voteButtonDisabled || !user?.uid } // Disable if authLoading or no user.uid
+                        disabled={voteButtonDisabled || !user?.uid } 
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
                         aria-label={!user?.uid && !authLoading ? "Login to vote" : "Vote for this server"}
                         >
@@ -286,3 +316,4 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
+

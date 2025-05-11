@@ -10,6 +10,7 @@ import {
   deleteFirebaseServer as deleteFirebaseServerData,
   getUserProfile,
   updateFirebaseUserProfile,
+  updateServerFeaturedStatus, // Added
   type ServerDataForCreation
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile } from './types';
@@ -25,7 +26,7 @@ async function isAdmin(userId: string | undefined): Promise<boolean> {
 
 export interface SubmitServerFormState {
   message: string;
-  fields?: Record<string, string | number>; // Allow number for port
+  fields?: Record<string, string | number>; 
   server?: Server;
   error?: boolean;
   errors?: { path: string; message: string }[];
@@ -236,5 +237,57 @@ export async function updateUserProfileAction(
       message: e.message || 'Failed to update profile.',
       error: true,
     };
+  }
+}
+
+
+export async function featureServerAction(
+  serverId: string,
+  adminUserId: string | undefined,
+  durationDays?: number
+): Promise<{ success: boolean; message: string; server?: Server }> {
+  if (!adminUserId || !(await isAdmin(adminUserId))) {
+    return { success: false, message: "Unauthorized: Admin role required." };
+  }
+  try {
+    const server = await updateServerFeaturedStatus(serverId, true, durationDays);
+    if (server) {
+      revalidatePath("/admin/servers");
+      revalidatePath(`/servers/${serverId}`);
+      revalidatePath("/");
+      return {
+        success: true,
+        message: `Server "${server.name}" has been featured.`,
+        server,
+      };
+    }
+    return { success: false, message: "Failed to feature server: not found." };
+  } catch (error: any) {
+    return { success: false, message: error.message || "Failed to feature server." };
+  }
+}
+
+export async function unfeatureServerAction(
+  serverId: string,
+  adminUserId: string | undefined
+): Promise<{ success: boolean; message: string; server?: Server }> {
+  if (!adminUserId || !(await isAdmin(adminUserId))) {
+    return { success: false, message: "Unauthorized: Admin role required." };
+  }
+  try {
+    const server = await updateServerFeaturedStatus(serverId, false);
+    if (server) {
+      revalidatePath("/admin/servers");
+      revalidatePath(`/servers/${serverId}`);
+      revalidatePath("/");
+      return {
+        success: true,
+        message: `Server "${server.name}" is no longer featured.`,
+        server,
+      };
+    }
+    return { success: false, message: "Failed to unfeature server: not found." };
+  } catch (error: any) {
+    return { success: false, message: error.message || "Failed to unfeature server." };
   }
 }
