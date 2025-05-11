@@ -1,15 +1,19 @@
+
 'use client';
 
 import Image from 'next/image';
 import type { Server } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon } from 'lucide-react';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
+import { useAuth } from '@/context/AuthContext'; // Import useAuth
+import Link from 'next/link';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 
 interface ServerDetailsProps {
@@ -18,6 +22,7 @@ interface ServerDetailsProps {
 
 export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
   const { toast } = useToast();
+  const { user, loading: authLoading } = useAuth();
   const [server, setServer] = useState(initialServer);
   const [isPending, startTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
@@ -25,7 +30,12 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
 
   useEffect(() => {
     if (server.submittedAt) {
-      setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
+      try {
+        setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
+      } catch (e) {
+        console.warn("Error formatting date:", server.submittedAt, e);
+        setTimeAgo('Unknown');
+      }
     } else {
       setTimeAgo('N/A');
     }
@@ -40,32 +50,52 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
   };
 
   const handleVote = async () => {
+     if (!user) {
+      toast({
+        title: 'Login Required',
+        description: 'You need to be logged in to vote.',
+        variant: 'destructive',
+        action: <Button asChild><Link href="/login">Login</Link></Button>
+      });
+      return;
+    }
     if (votedRecently || isPending) return;
     setVotedRecently(true);
 
     startTransition(async () => {
-      const result = await voteAction(server.id);
-      if (result.success && result.newVotes !== undefined) {
+      try {
+        const result = await voteAction(server.id);
+        if (result.success && result.newVotes !== undefined) {
+          toast({
+            title: 'Vote Cast!',
+            description: result.message,
+          });
+          setServer(prev => ({...prev, votes: result.newVotes!}));
+        } else {
+          toast({
+            title: 'Vote Failed',
+            description: result.message || 'Could not cast vote.',
+            variant: 'destructive',
+          });
+          setVotedRecently(false); 
+        }
+      } catch (e: any) {
         toast({
-          title: 'Vote Cast!',
-          description: result.message,
-        });
-        setServer(prev => ({...prev, votes: result.newVotes!}));
-      } else {
-        toast({
-          title: 'Vote Failed',
-          description: result.message,
-          variant: 'destructive',
-        });
-        setVotedRecently(false); 
+            title: 'Vote Error',
+            description: e.message || 'An unexpected error occurred.',
+            variant: 'destructive',
+          });
+        setVotedRecently(false);
       }
     });
     setTimeout(() => setVotedRecently(false), 60000); 
   };
   
+  const voteButtonDisabled = isPending || votedRecently || authLoading;
+  const voteButtonText = isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden shadow-xl">
       <CardHeader className="p-0 relative">
         {server.bannerUrl ? (
           <Image
@@ -96,9 +126,9 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
         )}
       </CardHeader>
       <CardContent className="p-6 space-y-6">
-        <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+        <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
             <CardTitle className="text-3xl font-bold text-primary">{server.name}</CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0">
                 <Button onClick={handleCopyIp} variant="outline" size="sm">
                     <ClipboardCopy className="w-4 h-4 mr-2" />
                     {server.ipAddress}:{server.port}
@@ -112,46 +142,17 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
             </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 rounded-md">
-            <Gamepad2 className="w-5 h-5 text-accent" />
-            <div>
-              <p className="text-muted-foreground">Game</p>
-              <p className="font-semibold">{server.game}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 rounded-md">
-            {server.isOnline ? (
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
-            ) : (
-              <XCircle className="w-5 h-5 text-red-500" />
-            )}
-            <div>
-              <p className="text-muted-foreground">Status</p>
-              <p className="font-semibold">{server.isOnline ? 'Online' : 'Offline'}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 rounded-md">
-            <Users className="w-5 h-5 text-accent" />
-            <div>
-              <p className="text-muted-foreground">Players</p>
-              <p className="font-semibold">{server.isOnline ? `${server.playerCount} / ${server.maxPlayers}` : 'N/A'}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 rounded-md">
-            <ThumbsUp className="w-5 h-5 text-accent" />
-            <div>
-              <p className="text-muted-foreground">Votes</p>
-              <p className="font-semibold">{server.votes}</p>
-            </div>
-          </div>
-           <div className="flex items-center gap-2 p-3 bg-secondary/50 rounded-md">
-            <Info className="w-5 h-5 text-accent" />
-            <div>
-              <p className="text-muted-foreground">Added</p>
-              <p className="font-semibold">{timeAgo}</p>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+          <InfoCard Icon={Gamepad2} label="Game" value={server.game} />
+          <InfoCard 
+            Icon={server.isOnline ? CheckCircle2 : XCircle} 
+            label="Status" 
+            value={server.isOnline ? 'Online' : 'Offline'}
+            iconClassName={server.isOnline ? 'text-green-500' : 'text-red-500'} 
+          />
+          <InfoCard Icon={Users} label="Players" value={server.isOnline ? `${server.playerCount} / ${server.maxPlayers}` : 'N/A'} />
+          <InfoCard Icon={ThumbsUp} label="Votes" value={String(server.votes)} />
+          <InfoCard Icon={Info} label="Added" value={timeAgo} />
         </div>
         
         <div>
@@ -169,23 +170,59 @@ export function ServerDetails({ server: initialServer }: ServerDetailsProps) {
             </div>
           </div>
         )}
-        
-        {/* Placeholder for live stats or more details */}
-        {/* <div className="border-t pt-6">
-            <h3 className="text-xl font-semibold mb-2 text-primary">Live Server Stats</h3>
-            <p className="text-muted-foreground">Steam Query integration would show more details here.</p>
-        </div> */}
-
       </CardContent>
       <CardFooter className="p-6 bg-secondary/30">
         <div className="flex flex-col sm:flex-row items-center justify-between w-full gap-4">
-            <p className="text-muted-foreground text-sm">Help this server climb the ranks!</p>
-            <Button onClick={handleVote} disabled={isPending || votedRecently} className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground">
-                <ThumbsUp className="w-4 h-4 mr-2" />
-                {isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server')}
-            </Button>
+            <p className="text-muted-foreground text-sm text-center sm:text-left">Help this server climb the ranks!</p>
+            <TooltipProvider>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button 
+                      onClick={handleVote} 
+                      disabled={voteButtonDisabled && user !== null}
+                      className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
+                      aria-label={!user && !authLoading ? "Login to vote" : "Vote for this server"}
+                    >
+                      <ThumbsUp className="w-4 h-4 mr-2" />
+                      {authLoading ? 'Loading...' : voteButtonText}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {!user && !authLoading && (
+                  <TooltipContent>
+                    <p className="flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Login to vote</p>
+                  </TooltipContent>
+                )}
+                {votedRecently && user && (
+                  <TooltipContent>
+                    <p>You've voted recently!</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
         </div>
       </CardFooter>
     </Card>
   );
 }
+
+interface InfoCardProps {
+  Icon: React.ElementType;
+  label: string;
+  value: string;
+  iconClassName?: string;
+}
+
+function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
+  return (
+    <div className="flex items-center gap-3 p-3 bg-card/50 rounded-md shadow-sm border">
+      <Icon className={`w-5 h-5 ${iconClassName || 'text-accent'}`} />
+      <div>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="font-semibold text-foreground">{value}</p>
+      </div>
+    </div>
+  );
+}
+

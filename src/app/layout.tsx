@@ -1,10 +1,10 @@
+
 import type {Metadata} from 'next';
 import { GeistSans } from 'geist/font/sans';
-// import { GeistMono } from 'geist/font/mono'; // Removed to fix "Module not found" error
 import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
 
-const geistSans = GeistSans; // No need to call as a function if using default import
-// const geistMono = GeistMono; // Removed
+const geistSans = GeistSans; 
 
 export const metadata: Metadata = {
   title: 'ServerSpotlight',
@@ -19,7 +19,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable}`} suppressHydrationWarning={true}>
       <body className="antialiased" suppressHydrationWarning={true}>
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

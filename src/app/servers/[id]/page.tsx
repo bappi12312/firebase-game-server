@@ -1,8 +1,10 @@
-import { getServerById } from '@/lib/mock-data';
+
+import { getFirebaseServerById } from '@/lib/firebase-data'; // Updated import
 import { ServerDetails } from '@/components/servers/ServerDetails';
-import { notFound } from 'next/navigation';
+// import { notFound } from 'next/navigation'; // notFound can be used
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertTriangle } from 'lucide-react';
+import type { Server } from '@/lib/types';
 
 interface ServerPageProps {
   params: {
@@ -11,7 +13,7 @@ interface ServerPageProps {
 }
 
 export async function generateMetadata({ params }: ServerPageProps) {
-  const server = await getServerById(params.id);
+  const server = await getFirebaseServerById(params.id);
   if (!server) {
     return {
       title: 'Server Not Found',
@@ -25,10 +27,9 @@ export async function generateMetadata({ params }: ServerPageProps) {
 
 
 export default async function ServerPage({ params }: ServerPageProps) {
-  const server = await getServerById(params.id);
+  const server: Server | null = await getFirebaseServerById(params.id);
 
   if (!server) {
-    // return notFound(); // Or a custom not found component
     return (
         <div className="flex flex-col items-center justify-center min-h-[60vh]">
             <Card className="w-full max-w-md p-8 text-center">

@@ -1,72 +1,76 @@
+
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import type { Server, Game, SortOption } from '@/lib/types';
-import { getServers as fetchServers, getGames as fetchGames } from '@/lib/mock-data';
+import { getFirebaseServers, getFirebaseGames } from '@/lib/firebase-data'; // Updated import
 import { ServerList } from '@/components/servers/ServerList';
 import { ServerFilters } from '@/components/servers/ServerFilters';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ServerCrash } from 'lucide-react';
 
 export default function HomePage() {
   const [allServers, setAllServers] = useState<Server[]>([]);
   const [games, setGames] = useState<Game[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [gameFilter, setGameFilter] = useState('all');
   const [sortBy, setSortBy] = useState<SortOption>('votes');
 
-  useEffect(() => {
-    async function loadData() {
-      setIsLoading(true);
-      try {
-        const [serversData, gamesData] = await Promise.all([
-          fetchServers(),
-          fetchGames(),
-        ]);
-        setAllServers(serversData);
-        setGames(gamesData);
-      } catch (error) {
-        console.error("Failed to load data:", error);
-        // Handle error state if necessary
-      } finally {
-        setIsLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Fetch games first or in parallel
+      const gamesData = await getFirebaseGames();
+      setGames(gamesData);
+
+      // Then fetch servers with current filters
+      const serversData = await getFirebaseServers(gameFilter, sortBy, searchTerm);
+      setAllServers(serversData);
+
+    } catch (err) {
+      console.error("Failed to load data:", err);
+      setError("Could not load server data. Please try again later.");
+    } finally {
+      setIsLoading(false);
     }
+  }, [gameFilter, sortBy, searchTerm]);
+
+
+  useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]); // Rerun when loadData (and its dependencies) change
 
+
+  // Client-side filtering and sorting are applied on the already fetched `allServers`
+  // If `getFirebaseServers` already handles all filtering/sorting, this `useMemo` might be simplified
+  // or only handle search if not done by backend.
+  // For now, `getFirebaseServers` implements basic filtering/sorting, and this will refine it or act as primary if backend is basic.
   const filteredAndSortedServers = useMemo(() => {
-    let servers = [...allServers];
-
-    if (searchTerm) {
+    let servers = [...allServers]; // `allServers` is already filtered by `gameFilter` and `sortBy` from `loadData`
+    
+    // If search is not handled by `getFirebaseServers` or needs further client-side refinement:
+    if (searchTerm && !getFirebaseServers.toString().includes("searchTerm")) { // crude check if backend handles search
       servers = servers.filter(
         (server) =>
           server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           server.ipAddress.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          server.game.toLowerCase().includes(searchTerm.toLowerCase())
+          (server.tags && server.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())))
       );
     }
-
-    if (gameFilter !== 'all') {
-      servers = servers.filter((server) => server.game === gameFilter);
+    // Sorting is primarily handled by `getFirebaseServers`. If additional client-side sort is needed, add here.
+    // Example: If `getFirebaseServers` doesn't sort by player count for offline servers correctly.
+    if (sortBy === 'playerCount') {
+       servers.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
     }
 
-    switch (sortBy) {
-      case 'votes':
-        servers.sort((a, b) => b.votes - a.votes);
-        break;
-      case 'playerCount':
-        servers.sort((a, b) => (b.isOnline ? b.playerCount : -1) - (a.isOnline ? a.playerCount : -1));
-        break;
-      case 'name':
-        servers.sort((a, b) => a.name.localeCompare(b.name));
-        break;
-      case 'submittedAt':
-        servers.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-        break;
-    }
     return servers;
-  }, [allServers, searchTerm, gameFilter, sortBy]);
+  }, [allServers, searchTerm, sortBy]);
+
 
   if (isLoading) {
     return (
@@ -83,6 +87,20 @@ export default function HomePage() {
             <CardSkeleton key={i} />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+         <Alert variant="destructive" className="w-full max-w-lg">
+          <ServerCrash className="h-5 w-5" />
+          <AlertTitle>Error Loading Servers</AlertTitle>
+          <AlertDescription>
+            {error}
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
