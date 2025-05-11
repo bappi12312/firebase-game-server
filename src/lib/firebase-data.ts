@@ -1,4 +1,5 @@
 
+
 import {
   collection,
   addDoc,
@@ -46,7 +47,7 @@ function formatFirebaseError(error: any, context: string): string {
       message += `Firestore permission denied. Please check your Firestore security rules to allow this operation. (Original message: ${error.message})`;
     } else if (firebaseErrorCode === 'failed-precondition' && error.message && error.message.toLowerCase().includes('query requires an index')) {
       // Directly use the error.message from Firebase, as it contains the link and necessary info.
-      message = `Error ${context}: ${error.message}`;
+      message = `Error ${context}: Firestore query requires an index. Please create it in the Firebase console. (Original message: ${error.message})`;
     } else if (firebaseErrorCode) {
       message += `Firebase Error (Code: ${firebaseErrorCode}): ${error.message}`;
     } else {
@@ -204,7 +205,11 @@ export async function getFirebaseServers(
         // For player count, we also want online servers first.
         // Firestore requires the first orderBy to match the inequality filter if any.
         // If no inequality filter on 'isOnline', we can sort by 'isOnline' then 'playerCount'.
-        qConstraints.push(orderBy('isOnline', 'desc')); 
+        // Check if status filter is active, if so, that's the first order by constraint by Firestore rules if it's on a different field than inequality.
+        // However, isOnline is boolean, not range/inequality in the typical sense that conflicts.
+        if (status === 'all' || status === 'approved') { // Only makes sense for approved or all servers
+           qConstraints.push(orderBy('isOnline', 'desc')); 
+        }
         baseOrderByField = 'playerCount'; 
         baseOrderByDirection = 'desc';
         break;
@@ -222,6 +227,12 @@ export async function getFirebaseServers(
     }
     
     qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
+     // If baseOrderByField is not '__name__', Firestore implicitly adds it as a final tie-breaker.
+    // If we are sorting by 'name' asc, we don't need to add it again.
+    // For other sorts, and to ensure stable pagination if implemented later, explicit name ordering is good.
+    if (baseOrderByField !== 'name') {
+        qConstraints.push(orderBy('name', 'asc')); // Secondary sort for consistency
+    }
     
     const q = query(serverCollRef, ...qConstraints);
     
@@ -247,11 +258,6 @@ export async function getFirebaseServers(
       );
     }
     
-    // Client-side sort for player count if primary sort was `isOnline` then `playerCount`
-    // This is now handled by Firestore if the index `isOnline DESC, playerCount DESC` exists.
-    // If sortBy is playerCount, Firestore already sorts by isOnline desc, then playerCount desc.
-    // No need for additional client-side sort for this specific case if indexes are set up.
-
     return serverList;
   } catch (error) {
     throw new Error(formatFirebaseError(error, "fetching servers"));
@@ -555,40 +561,49 @@ export async function getUsersCount(): Promise<number> {
   }
 }
 
-// This function would ideally run on a schedule (e.g., Cloud Function) or be triggered
-// but for simplicity, it can be called when viewing server details or lists if needed.
-export async function updateServerStatsInFirestore(serverId: string): Promise<void> {
+export async function updateServerStatsInFirestore(
+  serverId: string,
+  statsToUpdate: { isOnline: boolean; playerCount?: number; maxPlayers?: number }
+): Promise<void> {
   if (!db) {
-    // console.warn("updateServerStatsInFirestore: Firestore (db) is not initialized. Skipping stat update.");
+    console.warn("updateServerStatsInFirestore: Firestore (db) is not initialized. Skipping stat update.");
     return;
   }
   const serverRef = doc(db, 'servers', serverId);
-  const serverSnap = await getDoc(serverRef);
-
-  if (!serverSnap.exists()) {
-    // console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
-    return;
-  }
-
-  const serverData = serverSnap.data() as Server;
-  if(serverData.status !== 'approved') return; // Only update stats for approved servers
-
+  
   try {
-    const liveStats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
-    await updateDoc(serverRef, {
-      isOnline: liveStats.isOnline,
-      playerCount: liveStats.playerCount ?? 0,
-      maxPlayers: liveStats.maxPlayers ?? serverData.maxPlayers, // Keep existing maxPlayers if new one is undefined
-    });
+    const serverSnap = await getDoc(serverRef); // Check if server exists and its status
+    if (!serverSnap.exists()) {
+      console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
+      return;
+    }
+    const serverData = serverSnap.data() as Server;
+    if(serverData.status !== 'approved') { // Only update stats for approved servers
+        // console.log(`updateServerStatsInFirestore: Server ${serverId} is not approved. Skipping stat update.`);
+        return;
+    }
+
+    const updatePayload: Partial<Server> = {
+      isOnline: statsToUpdate.isOnline,
+      playerCount: statsToUpdate.playerCount ?? 0, // Fallback to 0 if undefined
+    };
+    if (statsToUpdate.maxPlayers !== undefined) {
+      updatePayload.maxPlayers = statsToUpdate.maxPlayers;
+    }
+    // If maxPlayers is not in statsToUpdate, it will remain unchanged in Firestore.
+
+    await updateDoc(serverRef, updatePayload as { [x: string]: any }); // Type assertion for updateDoc
+    // console.log(`Successfully updated stats for server ${serverId} in Firestore.`);
   } catch (error) {
     console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
-    // If stat fetching fails, mark as offline
-    await updateDoc(serverRef, {
-      isOnline: false,
-      playerCount: 0,
-    }).catch(e => console.error(formatFirebaseError(e, `marking server ${serverId} offline after stat update error`)));
+    // Optionally, mark as offline in Firestore if stat update itself fails,
+    // but this might conflict if the error was transient and server is actually online.
+    // Consider if this fallback is desired.
+    // await updateDoc(serverRef, { isOnline: false, playerCount: 0 })
+    //   .catch(e => console.error(formatFirebaseError(e, `marking server ${serverId} offline after stat update error`)));
   }
 }
+
 
 // This function could be used to periodically refresh server listings with live stats.
 // However, calling this for every server on every page load might be expensive.
@@ -644,18 +659,33 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
       const serversSnapshot = await getDocs(serversQuery);
 
       serversSnapshot.forEach(serverDoc => {
-        const serverData = serverDoc.data() as Server;
-        const voteEntry = votedServerEntries.find(entry => entry.serverId === serverDoc.id);
-        if (voteEntry) {
-          votedServersDetails.push({
-            server: {
-              id: serverDoc.id,
-              ...serverData,
-              submittedAt: (serverData.submittedAt instanceof Timestamp) ? serverData.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
-              lastVotedAt: (serverData.lastVotedAt instanceof Timestamp) ? serverData.lastVotedAt.toDate().toISOString() : undefined,
-            },
-            votedAt: voteEntry.votedAt,
-          });
+        const serverData = serverDoc.data(); // No 'as Server' yet
+        if (serverData) { // Ensure serverData is not undefined
+            const voteEntry = votedServerEntries.find(entry => entry.serverId === serverDoc.id);
+            if (voteEntry) {
+            votedServersDetails.push({
+                server: {
+                id: serverDoc.id,
+                name: serverData.name,
+                ipAddress: serverData.ipAddress,
+                port: serverData.port,
+                game: serverData.game,
+                description: serverData.description,
+                tags: serverData.tags || [],
+                playerCount: serverData.playerCount ?? 0,
+                maxPlayers: serverData.maxPlayers ?? 0,
+                isOnline: serverData.isOnline ?? false,
+                votes: serverData.votes ?? 0,
+                status: serverData.status as ServerStatus,
+                bannerUrl: serverData.bannerUrl,
+                logoUrl: serverData.logoUrl,
+                submittedBy: serverData.submittedBy,
+                submittedAt: (serverData.submittedAt instanceof Timestamp) ? serverData.submittedAt.toDate().toISOString() : new Date(0).toISOString(),
+                lastVotedAt: (serverData.lastVotedAt instanceof Timestamp) ? serverData.lastVotedAt.toDate().toISOString() : undefined,
+                },
+                votedAt: voteEntry.votedAt,
+            });
+            }
         }
       });
     }
@@ -697,3 +727,4 @@ export async function initializeStaticGamesInFirestore() {
 }
 // Example: Call this once if needed, e.g., from an admin utility or on app startup (carefully)
 // initializeStaticGamesInFirestore();
+

@@ -1,3 +1,4 @@
+
 'use client';
 
 import Image from 'next/image';
@@ -8,15 +9,15 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, useCallback } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getServerOnlineStatus } from '@/lib/firebase-data';
+import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
 
 interface ServerDetailsProps {
-  server: Server; // Renamed from initialServer for clarity within component
+  server: Server;
 }
 
 export function ServerDetails({ server: initialServerData }: ServerDetailsProps) {
@@ -30,7 +31,6 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
 
   useEffect(() => {
-    // Update internal server state if the prop changes (e.g., due to RSC revalidation)
     setServer(initialServerData);
   }, [initialServerData]);
 
@@ -47,24 +47,32 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     }
   }, [server.submittedAt]);
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      setIsLoadingStats(true);
-      try {
-        const stats = await getServerOnlineStatus(server.ipAddress, server.port);
-        setServer(prevServer => ({ ...prevServer, ...stats }));
-      } catch (error) {
-        console.error(`Failed to fetch server stats for ${server.name}:`, error);
-        setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
-      } finally {
-        setIsLoadingStats(false);
-      }
-    };
+  const fetchAndUpdateStats = useCallback(async () => {
+    if (server.status === 'approved' && server.ipAddress && server.port) {
+        setIsLoadingStats(true);
+        try {
+            const stats = await getServerOnlineStatus(server.ipAddress, server.port);
+            setServer(prevServer => ({ ...prevServer, ...stats }));
+            // Update Firestore with the new stats (fire-and-forget)
+            updateServerStatsInFirestore(server.id, stats)
+                .catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
+        } catch (error) {
+            console.error(`Failed to fetch server stats for ${server.name}:`, error);
+            setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
+        } finally {
+            setIsLoadingStats(false);
+        }
+    } else {
+        // For non-approved or servers without IP/Port, reflect current data or defaults
+        setIsLoadingStats(false); 
+    }
+  }, [server.id, server.ipAddress, server.port, server.status, server.name]); // server.name for logging, server.id for update call
 
-    fetchStats();
-    const intervalId = setInterval(fetchStats, 30000); // Refresh stats every 30 seconds
+  useEffect(() => {
+    fetchAndUpdateStats();
+    const intervalId = setInterval(fetchAndUpdateStats, 30000); // Refresh stats every 30 seconds
     return () => clearInterval(intervalId);
-  }, [server.id, server.ipAddress, server.port, server.name]); // server.name for logging
+  }, [fetchAndUpdateStats]);
 
   const handleCopyIp = () => {
     navigator.clipboard.writeText(`${server.ipAddress}:${server.port}`);
@@ -80,7 +88,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         title: 'Login Required',
         description: 'You need to be logged in to vote.',
         variant: 'destructive',
-        action: <Button asChild><Link href="/login">Login</Link></Button>
+        action: <Button asChild><Link href={`/login?redirect=/servers/${server.id}`}>Login</Link></Button>
       });
       return;
     }
@@ -131,6 +139,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             className="w-full h-48 md:h-64 object-cover"
             data-ai-hint="gameplay screenshot"
             priority
+            unoptimized={server.bannerUrl.startsWith('http://')}
           />
         ) : (
           <div className="w-full h-48 md:h-64 bg-secondary flex items-center justify-center" data-ai-hint="abstract design">
@@ -146,6 +155,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 height={80}
                 className="rounded-md"
                 data-ai-hint="server logo"
+                unoptimized={server.logoUrl.startsWith('http://')}
             />
            </div>
         )}
@@ -158,7 +168,6 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     <ClipboardCopy className="w-4 h-4 mr-2" />
                     {server.ipAddress}:{server.port}
                 </Button>
-                {/* Direct connect link might not work on all browsers/setups without Steam client integration */}
                 <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground">
                     <a href={`steam://connect/${server.ipAddress}:${server.port}`} title="Connect via Steam (requires Steam client)">
                     <ExternalLink className="w-4 h-4 mr-2" />

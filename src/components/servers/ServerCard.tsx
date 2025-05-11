@@ -1,3 +1,4 @@
+
 'use client';
 
 import Image from 'next/image';
@@ -12,7 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useState, useTransition, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getServerOnlineStatus } from '@/lib/firebase-data';
+import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
 
 interface ServerCardProps {
   server: Server;
@@ -33,38 +34,37 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   }, [initialServer]);
 
   const fetchStats = useCallback(async () => {
-    if (serverData.status === 'approved' && serverData.ipAddress && serverData.port) {
+    if (initialServer.status === 'approved' && initialServer.ipAddress && initialServer.port) {
       setIsLoadingStats(true);
       try {
-        // console.log(`Fetching stats for ${serverData.name} (${serverData.ipAddress}:${serverData.port}) in ServerCard`);
-        const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
+        const stats = await getServerOnlineStatus(initialServer.ipAddress, initialServer.port);
         setServerData(prevServer => ({ ...prevServer, ...stats }));
+        // Update Firestore with the new stats (fire-and-forget)
+        updateServerStatsInFirestore(initialServer.id, stats)
+          .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${initialServer.id}:`, err));
       } catch (error) {
-        console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
+        console.error(`Failed to fetch server stats for card ${initialServer.name}:`, error);
         setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0, maxPlayers: prevServer.maxPlayers || 0 }));
       } finally {
         setIsLoadingStats(false);
       }
-    } else if (serverData.status !== 'approved') {
-      // For non-approved servers, reflect database state or defaults
+    } else if (initialServer.status !== 'approved') {
       setServerData(prevServer => ({ 
         ...prevServer, 
         isOnline: initialServer.isOnline ?? false, 
         playerCount: initialServer.playerCount ?? 0, 
         maxPlayers: initialServer.maxPlayers ?? 0 
       }));
-      setIsLoadingStats(false); // Not loading live stats
+      setIsLoadingStats(false);
     }
-  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name, initialServer.isOnline, initialServer.playerCount, initialServer.maxPlayers]);
+  }, [initialServer.id, initialServer.ipAddress, initialServer.port, initialServer.status, initialServer.name, initialServer.isOnline, initialServer.playerCount, initialServer.maxPlayers]);
 
 
   useEffect(() => {
-    fetchStats(); // Initial fetch
-
-    // Set an interval to re-fetch stats, e.g., every 60 seconds
-    const intervalId = setInterval(fetchStats, 60000);
-    return () => clearInterval(intervalId); // Cleanup interval on component unmount
-  }, [fetchStats]); // Rerun if fetchStats changes (e.g. serverData.id etc.)
+    fetchStats(); 
+    const intervalId = setInterval(fetchStats, 60000); // Refresh every 60 seconds
+    return () => clearInterval(intervalId);
+  }, [fetchStats]);
 
 
   const handleVote = async () => {
@@ -73,7 +73,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         title: 'Login Required',
         description: 'You need to be logged in to vote.',
         variant: 'destructive',
-        action: <Button asChild><Link href="/login?redirect=">Login</Link></Button> // Added redirect to current page or home
+        action: <Button asChild><Link href={`/login?redirect=/servers/${serverData.id}`}>Login</Link></Button>
       });
       return;
     }
@@ -107,8 +107,6 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         setVotedRecently(false);
       }
     });
-    // Cooldown period before votedRecently is reset (e.g., 60 seconds client-side visual feedback)
-    // The actual vote lock is server-side (Firestore rule or timestamp check)
     setTimeout(() => setVotedRecently(false), 60000); 
   };
 
@@ -127,7 +125,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             height={150}
             className="w-full h-36 object-cover"
             data-ai-hint="game landscape"
-            unoptimized={serverData.bannerUrl.startsWith('http://')} // Example for external non-optimized http images
+            unoptimized={serverData.bannerUrl.startsWith('http://')} 
           />
         ) : (
           <div className="w-full h-36 bg-secondary flex items-center justify-center" data-ai-hint="abstract pattern">
@@ -186,7 +184,6 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
         <TooltipProvider>
           <Tooltip delayDuration={200}>
             <TooltipTrigger asChild>
-              {/* Span wrapper needed for disabled button tooltip to work */}
               <span> 
                 <Button 
                   onClick={handleVote} 
