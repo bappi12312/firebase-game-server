@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useTransition } from 'react'; // Added useTransition
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -17,7 +16,6 @@ import { useActionState } from 'react';
 
 const profileSettingsSchema = z.object({
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.'),
-  // email: z.string().email().optional(), // Email change is complex, handle separately
 });
 
 type ProfileSettingsFormValues = z.infer<typeof profileSettingsSchema>;
@@ -25,8 +23,10 @@ type ProfileSettingsFormValues = z.infer<typeof profileSettingsSchema>;
 export function ProfileSettingsForm() {
   const { toast } = useToast();
   const { user, userProfile, updateAuthContextProfile, loading: authLoading } = useAuth();
+  const [isPending, startTransition] = useTransition(); // For wrapping action call
 
   const initialState: UpdateUserProfileFormState = { message: '', error: false };
+  // Pass the server action and initial state to useActionState
   const [state, formAction] = useActionState(updateUserProfileAction, initialState);
 
   const form = useForm<ProfileSettingsFormValues>({
@@ -55,6 +55,7 @@ export function ProfileSettingsForm() {
           title: 'Success!',
           description: state.message,
         });
+        // Assuming state.updatedProfile might contain the new displayName
         if (state.updatedProfile?.displayName) {
            updateAuthContextProfile({ displayName: state.updatedProfile.displayName });
         }
@@ -66,7 +67,16 @@ export function ProfileSettingsForm() {
   const onSubmit = (data: ProfileSettingsFormValues) => {
     const formData = new FormData();
     formData.append('displayName', data.displayName);
-    formAction(formData);
+    if (user?.uid) { // Add userId to FormData
+      formData.append('userId', user.uid);
+    } else {
+      toast({ title: "Error", description: "User not identified. Please log in again.", variant: "destructive"});
+      return;
+    }
+    // Wrap the call to formAction in startTransition
+    startTransition(() => {
+      formAction(formData);
+    });
   };
 
   if (authLoading) {
@@ -81,6 +91,11 @@ export function ProfileSettingsForm() {
       </CardHeader>
       <CardContent>
         <Form {...form}>
+          {/* 
+            No need for <form action={...}> if we are using react-hook-form's handleSubmit 
+            and manually calling formAction wrapped in startTransition.
+            If we wanted to use native form submission with action prop, we'd structure it differently.
+          */}
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <FormField
               control={form.control}
@@ -95,17 +110,15 @@ export function ProfileSettingsForm() {
                 </FormItem>
               )}
             />
-
-            {/* Email display (non-editable for now) */}
             <FormItem>
                 <FormLabel>Email</FormLabel>
                 <Input type="email" value={user?.email || 'No email associated'} disabled />
                 <FormMessage />
             </FormItem>
             
-            <Button type="submit" disabled={form.formState.isSubmitting} className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground">
-              {form.formState.isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {form.formState.isSubmitting ? 'Saving...' : 'Save Changes'}
+            <Button type="submit" disabled={isPending || form.formState.isSubmitting} className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground">
+              {(isPending || form.formState.isSubmitting) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {(isPending || form.formState.isSubmitting) ? 'Saving...' : 'Save Changes'}
             </Button>
           </form>
         </Form>

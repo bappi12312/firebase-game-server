@@ -1,40 +1,25 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition, useActionState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, Controller } from 'react-hook-form';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { submitServerAction, type SubmitServerFormState } from '@/lib/actions';
+import { serverFormSchema } from '@/lib/schemas'; // Updated import
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, AlertCircle, UploadCloud } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
-import { useActionState } from 'react'; // React's own hook
 import { useFormStatus } from 'react-dom';
 
-
-const serverFormSchema = z.object({
-  name: z.string().min(3, 'Server name must be at least 3 characters long.').max(50, 'Server name too long.'),
-  ipAddress: z.string().regex(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$/, 'Invalid IP address or domain name.'),
-  port: z.coerce.number().min(1, 'Port must be a positive number.').max(65535, 'Port number cannot exceed 65535.'),
-  game: z.string().min(1, 'Please select a game.'),
-  description: z.string().min(10, 'Description must be at least 10 characters.').max(1000, 'Description cannot exceed 1000 characters.'),
-  bannerUrl: z.string().url('Invalid banner URL (e.g., https://example.com/banner.jpg).').optional().or(z.literal('')),
-  logoUrl: z.string().url('Invalid logo URL (e.g., https://example.com/logo.png).').optional().or(z.literal('')),
-  tags: z.string().optional().refine(val => !val || val.split(',').every(tag => tag.trim().length > 0 && tag.trim().length <= 20), {
-    message: "Tags should be comma-separated, each up to 20 characters."
-  }).refine(val => !val || val.split(',').length <= 5, {
-    message: "Maximum of 5 tags allowed."
-  }),
-});
 
 type ServerFormValues = z.infer<typeof serverFormSchema>;
 
@@ -55,9 +40,9 @@ function SubmitButtonContent() {
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth(); 
+  const [isTransitionPending, startTransition] = useTransition();
   
   const initialState: SubmitServerFormState = { message: '', error: false, fields: {} };
-  // useActionState hook manages state updates based on the Server Action's result
   const [state, formAction] = useActionState(submitServerAction, initialState);
 
 
@@ -83,7 +68,6 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
           description: state.message,
           variant: 'destructive',
         });
-        // If server-side validation fails, repopulate form with previous values and errors
         if (state.fields) {
           for (const [key, value] of Object.entries(state.fields)) {
             if (key in form.getValues()) {
@@ -102,11 +86,38 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
           title: 'Success!',
           description: state.message,
         });
-        form.reset(); // Reset form on successful submission
+        form.reset({ // Reset with empty values or initial default values
+          name: '',
+          ipAddress: '',
+          port: 25565,
+          game: '',
+          description: '',
+          bannerUrl: '',
+          logoUrl: '',
+          tags: '',
+        }); 
       }
     }
   }, [state, toast, form]);
 
+
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    if (user?.uid) {
+      formData.append('userId', user.uid);
+    } else {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to submit a server.",
+        variant: "destructive"
+      });
+      return;
+    }
+    startTransition(() => {
+      formAction(formData);
+    });
+  };
 
   if (authLoading) {
     return (
@@ -150,13 +161,8 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         <CardDescription>Fill in the details below to list your server on ServerSpotlight.</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Pass formAction to the native form's action prop */}
-        <form action={formAction} className="space-y-6">
-            {/* react-hook-form's FormProvider for managing form state with Controller */}
+        <form onSubmit={handleFormSubmit} className="space-y-6">
            <Form {...form}>
-            {/* Hidden input for submittedBy if needed by action, or handle in action via auth state */}
-            {/* <input type="hidden" name="submittedBy" value={user.uid} /> */}
-
             <FormField
               control={form.control}
               name="name"
@@ -285,7 +291,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             />
             <div className="flex justify-end pt-2">
                 <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
-                        disabled={form.formState.isSubmitting || (typeof document !== 'undefined' && (document.activeElement as HTMLButtonElement)?.form?.dataset?.pending === 'true')}>
+                        disabled={isTransitionPending || form.formState.isSubmitting}>
                    <SubmitButtonContent />
                 </Button>
             </div>
@@ -295,3 +301,4 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
+

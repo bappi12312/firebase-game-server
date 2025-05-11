@@ -9,39 +9,19 @@ import {
   updateFirebaseServerStatus,
   deleteFirebaseServer as deleteFirebaseServerData,
   getUserProfile,
-  updateFirebaseUserProfile
+  updateFirebaseUserProfile,
+  type ServerDataForCreation // Import type for addFirebaseServer
 } from './firebase-data';
 import type { Server, ServerStatus, UserProfile } from './types';
 import { auth } from './firebase'; 
+import { serverFormSchema } from '@/lib/schemas'; // Import from new location
 
 // Helper to check for admin role
 async function isAdmin(userId: string | undefined): Promise<boolean> {
   if (!userId) return false;
-  // Assuming auth is initialized and available for server-side checks if necessary
-  // For client-SDK on server, auth.currentUser is not reliable.
-  // This function should ideally use Admin SDK if called from a trusted server environment
-  // or rely on a custom claim set via Admin SDK.
-  // For now, it fetches profile which works if Firestore rules allow.
   const userProfile = await getUserProfile(userId);
   return userProfile?.role === 'admin';
 }
-
-
-const serverFormSchema = z.object({
-  name: z.string().min(3, { message: 'Server name must be at least 3 characters long.' }).max(50, { message: 'Server name too long.'}),
-  ipAddress: z.string().regex(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^([a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$/, { message: 'Invalid IP address or domain name.'}),
-  port: z.coerce.number().min(1, { message: 'Port must be a positive number.'}).max(65535, { message: 'Port number cannot exceed 65535.'}),
-  game: z.string().min(1, { message: 'Please select a game.'}),
-  description: z.string().min(10, { message: 'Description must be at least 10 characters.'}).max(1000, { message: 'Description cannot exceed 1000 characters.'}),
-  bannerUrl: z.string().url({ message: 'Invalid banner URL (e.g., https://example.com/banner.jpg).'}).optional().or(z.literal('')),
-  logoUrl: z.string().url({ message: 'Invalid logo URL (e.g., https://example.com/logo.png).'}).optional().or(z.literal('')),
-  tags: z.string().optional().refine(val => !val || val.split(',').every(tag => tag.trim().length > 0 && tag.trim().length <= 20), {
-    message: "Tags should be comma-separated, each 1-20 characters."
-  }).refine(val => !val || val.split(',').length <= 5, {
-    message: "Maximum of 5 tags allowed."
-  }),
-});
-
 
 export interface SubmitServerFormState {
   message: string;
@@ -52,54 +32,61 @@ export interface SubmitServerFormState {
 }
 
 export async function submitServerAction(
-  prevState: SubmitServerFormState, // Previous state from useActionState
+  prevState: SubmitServerFormState, 
   formData: FormData
 ): Promise<SubmitServerFormState> {
-   if (!auth || !auth.currentUser) { // Check if auth is initialized and user is logged in
-    return { message: "You must be logged in to submit a server.", error: true, fields: Object.fromEntries(formData) as Record<string,string> };
+  const rawFormData = Object.fromEntries(formData.entries()) as Record<string, string>;
+  const userId = formData.get('userId') as string | null;
+
+  if (!userId) {
+    return { 
+      message: "User information not provided. You must be logged in to submit a server.", 
+      error: true, 
+      fields: rawFormData
+    };
   }
   
-  const rawFormData = Object.fromEntries(formData.entries());
-  const parsed = serverFormSchema.safeParse(rawFormData);
+  // Remove userId from rawFormData before parsing with serverFormSchema if it's not part of the schema
+  const parseableFormData = {...rawFormData};
+  delete parseableFormData.userId;
+
+  const parsed = serverFormSchema.safeParse(parseableFormData);
 
   if (!parsed.success) {
     return {
       message: 'Invalid form data. Please check the fields.',
-      fields: rawFormData as Record<string, string>, // Return raw form data for repopulation
+      fields: rawFormData, 
       error: true,
       errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
     };
   }
   
-  const submittedBy = auth.currentUser.uid;
+  const submittedBy = userId;
 
   try {
-    // Prepare data, ensuring optional fields are handled
-    const dataToSave = {
-      ...parsed.data,
-      bannerUrl: parsed.data.bannerUrl || undefined, // Store undefined if empty string
-      logoUrl: parsed.data.logoUrl || undefined,   // Store undefined if empty string
-      tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [], // Convert comma-separated string to array
-      submittedBy: submittedBy, // Add submittedBy field
+    const dataToSave: ServerDataForCreation = {
+      name: parsed.data.name,
+      ipAddress: parsed.data.ipAddress,
+      port: parsed.data.port, // Already a number due to z.coerce.number()
+      game: parsed.data.game,
+      description: parsed.data.description,
+      bannerUrl: parsed.data.bannerUrl || undefined,
+      logoUrl: parsed.data.logoUrl || undefined,
+      tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
+      submittedBy: submittedBy,
     };
     
-    // Omit fields not expected by addFirebaseServer (id, votes, timestamps, status etc. are set by backend)
-    const { 
-        // These are set by addFirebaseServer or are not part of initial submission data structure for that func
-    } = dataToSave;
-
-
     const newServer = await addFirebaseServer(dataToSave);
     
-    revalidatePath('/'); // Revalidate homepage
-    revalidatePath('/servers/submit'); // Revalidate submission page (though usually redirects or clears)
-    revalidatePath('/admin/servers'); // Revalidate admin server list
+    revalidatePath('/'); 
+    revalidatePath('/servers/submit'); 
+    revalidatePath('/admin/servers'); 
     return { message: `Server "${newServer.name}" submitted successfully! It's now pending review.`, server: newServer, error: false };
   } catch (e: any) {
     console.error("Submission error in submitServerAction:", e);
     return {
       message: e.message || 'Failed to submit server. Please try again.',
-      fields: rawFormData as Record<string, string>,
+      fields: rawFormData,
       error: true,
     };
   }
@@ -115,18 +102,18 @@ export async function voteAction(serverId: string): Promise<{ success: boolean; 
     return { success: false, message: 'Server ID is required.' };
   }
   
-  const currentUser = auth.currentUser;
+  const currentUser = auth.currentUser; 
   if (!currentUser) {
     return { success: false, message: "You must be logged in to vote." };
   }
 
 
   try {
-    const updatedServer = await voteForFirebaseServer(serverId, currentUser.uid); // Pass UID for vote tracking
+    const updatedServer = await voteForFirebaseServer(serverId, currentUser.uid);
     if (updatedServer) {
       revalidatePath('/'); 
       revalidatePath(`/servers/${serverId}`); 
-      revalidatePath('/admin/servers'); // If admin dashboard shows votes
+      revalidatePath('/admin/servers'); 
       return { success: true, message: `Voted for ${updatedServer.name}!`, newVotes: updatedServer.votes, serverId: serverId };
     }
     return { success: false, message: 'Server not found or unable to vote.' };
@@ -137,7 +124,7 @@ export async function voteAction(serverId: string): Promise<{ success: boolean; 
 }
 
 export async function approveServerAction(serverId: string, adminUserId?: string): Promise<{ success: boolean; message: string }> {
-  if (!await isAdmin(adminUserId)) {
+  if (!adminUserId || !await isAdmin(adminUserId)) {
     return { success: false, message: "Unauthorized: Admin role required." };
   }
   try {
@@ -155,14 +142,14 @@ export async function approveServerAction(serverId: string, adminUserId?: string
 }
 
 export async function rejectServerAction(serverId: string, adminUserId?: string): Promise<{ success: boolean; message: string }> {
- if (!await isAdmin(adminUserId)) {
+ if (!adminUserId || !await isAdmin(adminUserId)) {
     return { success: false, message: "Unauthorized: Admin role required." };
   }
   try {
     const server = await updateFirebaseServerStatus(serverId, 'rejected');
      if (server) {
       revalidatePath('/admin/servers');
-      revalidatePath(`/servers/${serverId}`); // Potentially hide it from public view if rejected
+      revalidatePath(`/servers/${serverId}`); 
       revalidatePath('/');
       return { success: true, message: `Server "${server.name}" rejected.` };
     }
@@ -173,13 +160,13 @@ export async function rejectServerAction(serverId: string, adminUserId?: string)
 }
 
 export async function deleteServerAction(serverId: string, adminUserId?: string): Promise<{ success: boolean; message: string }> {
-  if (!await isAdmin(adminUserId)) {
+  if (!adminUserId || !await isAdmin(adminUserId)) {
     return { success: false, message: "Unauthorized: Admin role required." };
   }
   try {
     await deleteFirebaseServerData(serverId);
     revalidatePath('/admin/servers');
-    revalidatePath('/'); // Remove from listings
+    revalidatePath('/'); 
     return { success: true, message: "Server deleted successfully." };
   } catch (error: any) {
     return { success: false, message: error.message || "Failed to delete server." };
@@ -188,7 +175,6 @@ export async function deleteServerAction(serverId: string, adminUserId?: string)
 
 const userProfileUpdateSchema = z.object({
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.').optional(),
-  // photoURL: z.string().url('Invalid photo URL.').optional().or(z.literal('')), // Add if handling photoURL updates
 });
 
 export interface UpdateUserProfileFormState {
@@ -202,12 +188,17 @@ export async function updateUserProfileAction(
   prevState: UpdateUserProfileFormState,
   formData: FormData
 ): Promise<UpdateUserProfileFormState> {
-  if (!auth || !auth.currentUser) {
-    return { message: "You must be logged in to update your profile.", error: true };
+  const userIdFromForm = formData.get('userId') as string | null; 
+  
+  if (!userIdFromForm) {
+     return { message: "User information not provided. Cannot update profile.", error: true };
   }
 
   const rawFormData = Object.fromEntries(formData.entries());
-  const parsed = userProfileUpdateSchema.safeParse(rawFormData);
+  const parseableProfileData = {...rawFormData};
+  delete parseableProfileData.userId;
+
+  const parsed = userProfileUpdateSchema.safeParse(parseableProfileData);
 
   if (!parsed.success) {
     return {
@@ -216,21 +207,17 @@ export async function updateUserProfileAction(
     };
   }
 
-  const userId = auth.currentUser.uid;
   const updates: Partial<Pick<UserProfile, 'displayName' | 'photoURL'>> = {};
   if (parsed.data.displayName) {
     updates.displayName = parsed.data.displayName;
   }
-  // Add photoURL logic if implementing photo updates
-  // if (parsed.data.photoURL) updates.photoURL = parsed.data.photoURL;
-
 
   if (Object.keys(updates).length === 0) {
      return { message: "No changes to save.", error: false };
   }
 
   try {
-    const updatedFields = await updateFirebaseUserProfile(userId, updates);
+    const updatedFields = await updateFirebaseUserProfile(userIdFromForm, updates);
     revalidatePath('/profile/settings');
     return { message: 'Profile updated successfully!', error: false, updatedProfile: updatedFields };
   } catch (e: any) {
