@@ -272,7 +272,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          {infoCards.map(card => <InfoCard key={card.key} {...card} />)}
+          {infoCards.map(({ key, ...restOfCardProps }) => <InfoCard key={key} {...restOfCardProps} />)}
         </div>
         
         <div>
@@ -373,3 +373,5 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
+
+    
