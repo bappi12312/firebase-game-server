@@ -1,3 +1,4 @@
+
 import type { FieldValue, Timestamp } from 'firebase/firestore';
 
 export type ServerStatus = 'pending' | 'approved' | 'rejected';
@@ -46,3 +47,30 @@ export interface VotedServerInfo {
   votedAt: string; // ISO string date of the last vote by the user
 }
 
+export const REPORT_REASONS = [
+  "Incorrect Information",
+  "Server Offline (Extended)",
+  "Rule Violation / Abuse",
+  "Hateful Content",
+  "Technical Issues (Lag, etc.)",
+  "Other",
+] as const;
+
+export type ReportReason = typeof REPORT_REASONS[number];
+
+export type ReportStatus = 'pending' | 'investigating' | 'resolved' | 'dismissed';
+
+export interface Report {
+  id: string;
+  serverId: string;
+  serverName: string; // Denormalized for easier display
+  reportingUserId: string;
+  reportingUserDisplayName?: string | null; // Denormalized
+  reason: ReportReason;
+  description: string;
+  reportedAt: string; // ISO string
+  status: ReportStatus;
+  resolvedBy?: string | null; // UID of admin
+  resolvedAt?: string | null; // ISO string
+  adminNotes?: string | null;
+}

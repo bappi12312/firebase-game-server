@@ -1,5 +1,6 @@
 
 import { z } from 'zod';
+import { REPORT_REASONS } from './types';
 
 export const serverFormSchema = z.object({
   name: z.string().min(3, { message: 'Server name must be at least 3 characters long.' }).max(50, { message: 'Server name too long.'}),
@@ -19,4 +20,11 @@ export const serverFormSchema = z.object({
 export const userProfileUpdateSchema = z.object({
   displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.').optional(),
   // Add other updatable profile fields here if needed
+});
+
+export const reportFormSchema = z.object({
+  reason: z.enum(REPORT_REASONS, {
+    errorMap: () => ({ message: "Please select a valid reason." }),
+  }),
+  description: z.string().min(10, "Description must be at least 10 characters.").max(500, "Description cannot exceed 500 characters."),
 });

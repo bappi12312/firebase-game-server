@@ -23,7 +23,7 @@ import {
 import { updateProfile as updateAuthProfile, type User as FirebaseUserType } from 'firebase/auth';
 import type { z } from 'zod';
 import { db, auth } from './firebase';
-import type { Server, Game, ServerStatus, UserProfile, SortOption, VotedServerInfo } from './types';
+import type { Server, Game, ServerStatus, UserProfile, SortOption, VotedServerInfo, Report, ReportStatus, ReportReason } from './types';
 import { serverFormSchema } from '@/lib/schemas'; 
 
 // Simulate fetching server stats (mock for now, replace with actual Steam Query or similar)
@@ -133,13 +133,14 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
         } as UserProfile;
     }
     
+    // Fallback if getDoc immediately after setDoc doesn't reflect serverTimestamp correctly (should be rare)
     return {
         uid: user.uid,
         email: user.email,
         displayName: user.displayName,
         photoURL: user.photoURL,
         role: role,
-        createdAt: new Date().toISOString(), 
+        createdAt: new Date().toISOString(), // Fallback to client time if serverTimestamp is not immediately available
         emailVerified: user.emailVerified,
     };
 
@@ -147,6 +148,8 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
      let specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
      if (error.code === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
         specificMessage = `Error creating/updating user profile in Firestore for UID ${user.uid}: Firestore permission denied. Check your security rules for the 'users' collection. (Original message: ${error.message})`;
+     } else {
+       specificMessage = `Error creating user profile in Firestore for UID ${user.uid}: ${error.message || 'Could not save user profile to database.'}`;
      }
      console.error(specificMessage, error);
      throw new Error(specificMessage);
@@ -224,21 +227,24 @@ export async function getFirebaseServers(
     if (sortBy === 'featured') {
       if (status === 'approved' || status === 'all') { // Only apply featured sort to relevant status views
         qConstraints.push(orderBy('isFeatured', 'desc'));
+        qConstraints.push(orderBy('featuredUntil', 'desc')); // Servers with no expiry (null) might come after those with future dates.
         qConstraints.push(orderBy('votes', 'desc'));
         qConstraints.push(orderBy('isOnline', 'desc'));
         qConstraints.push(orderBy('playerCount', 'desc'));
         qConstraints.push(orderBy('name', 'asc')); // Final tie-breaker
       } else {
         // If status is specific (e.g., 'pending') and sortBy is 'featured',
-        // it doesn't make sense to sort by 'featured' status. Fallback to votes.
+        // it doesn't make sense to sort by 'featured' status. Fallback to submission date or votes.
+        qConstraints.push(orderBy('submittedAt', 'desc'));
         qConstraints.push(orderBy('votes', 'desc'));
         qConstraints.push(orderBy('name', 'asc'));
       }
     } else {
       // Handle other specific sort options
-      // Always put featured servers first if viewing approved or all statuses
+      // Always put featured servers first if viewing approved or all statuses, before the main sort criteria
       if (status === 'approved' || status === 'all') {
         qConstraints.push(orderBy('isFeatured', 'desc'));
+        qConstraints.push(orderBy('featuredUntil', 'desc'));
       }
 
       let baseOrderByField: keyof Server = 'votes';
@@ -270,8 +276,8 @@ export async function getFirebaseServers(
           baseOrderByDirection = 'desc';
       }
       
-      // Add the primary sort field from the switch, ensuring it's not 'isFeatured' again.
-      if (baseOrderByField !== 'isFeatured') {
+      // Add the primary sort field from the switch, ensuring it's not redundant with featured sort.
+      if (baseOrderByField !== 'isFeatured' && baseOrderByField !== 'featuredUntil') {
         qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
       }
        
@@ -480,7 +486,14 @@ export async function deleteFirebaseServer(id: string): Promise<void> {
   }
   try {
     const serverDocRef = doc(db, 'servers', id);
-    await deleteDoc(serverDocRef);
+    // Also delete reports associated with this server
+    const reportsQuery = query(collection(db, 'reports'), where('serverId', '==', id));
+    const reportsSnapshot = await getDocs(reportsQuery);
+    const batch = writeBatch(db);
+    reportsSnapshot.forEach(reportDoc => batch.delete(reportDoc.ref));
+    batch.delete(serverDocRef);
+    await batch.commit();
+
   } catch (error) {
     throw new Error(formatFirebaseError(error, `deleting server (${id})`));
   }
@@ -660,7 +673,7 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
     const serverIds = votedServerEntries.map(entry => entry.serverId);
     const votedServersDetails: VotedServerInfo[] = [];
 
-    const batchSize = 30;
+    const batchSize = 30; // Firestore 'in' query limit
     for (let i = 0; i < serverIds.length; i += batchSize) {
       const serverIdsBatch = serverIds.slice(i, i + batchSize);
       if (serverIdsBatch.length === 0) continue;
@@ -762,5 +775,94 @@ export async function updateServerFeaturedStatus(
         `updating featured status for server (${serverId})`
       )
     );
+  }
+}
+
+// --- Report Functions ---
+export async function addFirebaseReport(reportData: Omit<Report, 'id' | 'reportedAt' | 'status'>): Promise<Report> {
+  if (!db) {
+    throw new Error(formatFirebaseError({ message: "Firestore (db) is not initialized." }, "adding report. Database service not available."));
+  }
+  const dataToSave = {
+    ...reportData,
+    reportedAt: serverTimestamp() as FieldValue,
+    status: 'pending' as ReportStatus,
+  };
+  try {
+    const docRef = await addDoc(collection(db, 'reports'), dataToSave);
+    const newDocSnap = await getDoc(docRef);
+    const finalData = newDocSnap.data();
+    if (!finalData) throw new Error("Failed to retrieve report data after creation.");
+    return {
+      id: docRef.id,
+      ...finalData,
+      reportedAt: toRequiredISODateString(finalData.reportedAt, new Date().toISOString()),
+      resolvedAt: toISODateString(finalData.resolvedAt),
+    } as Report;
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, "adding report"));
+  }
+}
+
+export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'all'): Promise<Report[]> {
+  if (!db) {
+    throw new Error(formatFirebaseError({ message: "Firestore (db) is not initialized." }, "getting reports. Database service not available."));
+  }
+  try {
+    const reportsCollRef = collection(db, 'reports');
+    let qConstraints: QueryConstraint[] = [orderBy('reportedAt', 'desc')];
+    if (filterStatus !== 'all') {
+      qConstraints.push(where('status', '==', filterStatus));
+    }
+    const q = query(reportsCollRef, ...qConstraints);
+    const reportSnapshot = await getDocs(q);
+    return reportSnapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        ...data,
+        reportedAt: toRequiredISODateString(data.reportedAt),
+        resolvedAt: toISODateString(data.resolvedAt),
+      } as Report;
+    });
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, "fetching reports"));
+  }
+}
+
+export async function updateFirebaseReportStatus(
+  reportId: string,
+  status: ReportStatus,
+  adminUserId: string,
+  adminNotes?: string
+): Promise<Report | null> {
+  if (!db) {
+    throw new Error(formatFirebaseError({ message: "Firestore (db) is not initialized." }, "updating report status. Database service not available."));
+  }
+  try {
+    const reportDocRef = doc(db, 'reports', reportId);
+    const updates: Partial<Report> & { resolvedAt?: FieldValue | null } = {
+      status,
+      resolvedBy: adminUserId,
+      resolvedAt: serverTimestamp() as FieldValue,
+    };
+    if (adminNotes) {
+      updates.adminNotes = adminNotes;
+    }
+    await updateDoc(reportDocRef, updates as { [x: string]: any });
+    
+    const updatedDocSnap = await getDoc(reportDocRef);
+    if (updatedDocSnap.exists()) {
+      const data = updatedDocSnap.data();
+      return {
+        id: updatedDocSnap.id,
+        ...data,
+        reportedAt: toRequiredISODateString(data.reportedAt),
+        resolvedAt: toRequiredISODateString(data.resolvedAt, new Date().toISOString()),
+      } as Report;
+    }
+    return null;
+  } catch (error) {
+    throw new Error(formatFirebaseError(error, `updating report status (${reportId} to ${status})`));
   }
 }

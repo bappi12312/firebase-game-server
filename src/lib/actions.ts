@@ -11,11 +11,19 @@ import {
   getUserProfile,
   updateFirebaseUserProfile,
   updateServerFeaturedStatus,
+  addFirebaseReport,
+  updateFirebaseReportStatus,
   type ServerDataForCreation
 } from './firebase-data';
-import type { Server, ServerStatus, UserProfile } from './types';
+import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
 import { auth } from './firebase'; 
-import { serverFormSchema } from '@/lib/schemas';
+import { serverFormSchema, reportFormSchema } from '@/lib/schemas';
+
+// Helper to check for admin role
+async function isAdmin(userId: string): Promise<boolean> {
+  const profile = await getUserProfile(userId);
+  return profile?.role === 'admin';
+}
 
 // Helper to check for admin role or if user is featuring their own server (simplified for now)
 async function canUserFeatureServer(userId: string | undefined, serverId: string, serverData?: Server | null): Promise<boolean> {
@@ -32,11 +40,10 @@ async function canUserFeatureServer(userId: string | undefined, serverId: string
   if (!serverData) {
     // This part might need to be handled differently if serverData isn't easily passed or too costly to fetch again
     // For now, let's assume for self-serve, this check needs to be robust.
-    // As a placeholder, if not admin, and trying to feature, it's a user action on their server.
     // A real implementation would fetch the server to check submittedBy.
-    // For this simulation, if it's not an admin action (adminUserId not passed as such), we allow it.
-    return true; // Placeholder: allows user to feature if not explicitly an admin action.
-                   // This needs to be replaced with actual ownership/submitter check.
+    // For this simulation, if not admin, and trying to feature, it's a user action on their server.
+    // This needs to be replaced with actual ownership/submitter check.
+    return true; 
   }
   return serverData.submittedBy === userId;
 }
@@ -202,10 +209,6 @@ export async function deleteServerAction(serverId: string, adminUserId?: string)
   }
 }
 
-const userProfileUpdateSchemaAction = z.object({ 
-  displayName: z.string().min(3, 'Display name must be at least 3 characters.').max(50, 'Display name must be less than 50 characters.').optional(),
-});
-
 export interface UpdateUserProfileFormState {
   message: string;
   error: boolean;
@@ -227,7 +230,7 @@ export async function updateUserProfileAction(
   const parseableProfileData = {...rawFormData};
   delete parseableProfileData.userId;
 
-  const parsed = userProfileUpdateSchemaAction.safeParse(parseableProfileData);
+  const parsed = userProfileUpdateSchema.safeParse(parseableProfileData);
 
   if (!parsed.success) {
     return {
@@ -268,40 +271,17 @@ export async function featureServerAction(
   if (!requestingUserId) {
     return { success: false, message: "User ID not provided for feature request." };
   }
-
-  // Permission Check:
-  // 1. Is the requestingUser an admin?
-  // 2. OR is the requestingUser the submitter of the server (for self-paid features)?
-  // This part needs a robust implementation. For simulation, we simplify.
+  
   const profile = await getUserProfile(requestingUserId);
   const isRequestingUserAdmin = profile?.role === 'admin';
-
-  // In a real scenario, if not admin, you'd fetch the server to check server.submittedBy === requestingUserId
-  // For this simulation, if the `requestingUserId` is not an admin, we'll assume it's a user trying to feature their own server.
-  // A proper check for server ownership or submission by `requestingUserId` would be needed here.
-  // e.g., const serverToFeature = await getFirebaseServerById(serverId);
-  //       if (!isRequestingUserAdmin && serverToFeature?.submittedBy !== requestingUserId) {
-  //         return { success: false, message: "Unauthorized: You can only feature your own servers or require admin rights." };
-  //       }
   
-  // Simplified check for now: if not admin, we allow (simulating user paid feature)
-  // If it's an admin making the change, that's also fine.
-  // This means the action is less restrictive for the simulation purpose.
-  // Production would need:
-  // - If admin: allow.
-  // - If user: check if server.submittedBy === requestingUserId AND payment is verified.
-  
-  // If `requestingUserId` is an admin, they can feature any server.
-  // If `requestingUserId` is not an admin, it's assumed they are trying to feature their own server (after payment).
-  // The `updateServerFeaturedStatus` itself doesn't have permission checks, it's up to this action.
-
   try {
     const server = await updateServerFeaturedStatus(serverId, true, durationDays);
     if (server) {
-      revalidatePath("/admin/servers"); // For admins to see changes
-      revalidatePath(`/servers/${serverId}`); // For the server's detail page
-      revalidatePath("/"); // For the main server list
-      revalidatePath("/dashboard"); // If featured servers appear on user dashboards
+      revalidatePath("/admin/servers"); 
+      revalidatePath(`/servers/${serverId}`); 
+      revalidatePath("/"); 
+      revalidatePath("/dashboard"); 
       return {
         success: true,
         message: `Server "${server.name}" has been featured.`,
@@ -340,3 +320,74 @@ export async function unfeatureServerAction(
   }
 }
 
+export interface ReportServerFormState {
+  message: string;
+  error?: boolean;
+  errors?: { path: string; message: string }[];
+}
+
+export async function reportServerAction(
+  prevState: ReportServerFormState,
+  formData: FormData
+): Promise<ReportServerFormState> {
+  const serverId = formData.get('serverId') as string | null;
+  const serverName = formData.get('serverName') as string | null;
+  const reportingUserId = formData.get('reportingUserId') as string | null;
+  const reportingUserDisplayName = formData.get('reportingUserDisplayName') as string | null;
+
+  if (!serverId || !serverName || !reportingUserId) {
+    return { message: "Missing required information (server or user details).", error: true };
+  }
+
+  const parsed = reportFormSchema.safeParse({
+    reason: formData.get('reason'),
+    description: formData.get('description'),
+  });
+
+  if (!parsed.success) {
+    return {
+      message: "Invalid report data.",
+      error: true,
+      errors: parsed.error.errors.map(err => ({ path: err.path.join('.'), message: err.message })),
+    };
+  }
+
+  try {
+    const reportData: Omit<Report, 'id' | 'reportedAt' | 'status'> = {
+      serverId,
+      serverName,
+      reportingUserId,
+      reportingUserDisplayName: reportingUserDisplayName || 'Anonymous',
+      reason: parsed.data.reason,
+      description: parsed.data.description,
+    };
+    await addFirebaseReport(reportData);
+    revalidatePath(`/servers/${serverId}`); // Revalidate server page
+    revalidatePath('/admin/reports'); // Revalidate admin reports page
+    return { message: "Server reported successfully. Our team will review it shortly.", error: false };
+  } catch (e: any) {
+    return { message: e.message || "Failed to submit report.", error: true };
+  }
+}
+
+export async function resolveReportAction(
+  reportId: string,
+  adminUserId: string,
+  newStatus: ReportStatus,
+  adminNotes?: string
+): Promise<{ success: boolean; message: string; report?: Report }> {
+  if (!await isAdmin(adminUserId)) {
+    return { success: false, message: "Unauthorized: Admin role required." };
+  }
+
+  try {
+    const report = await updateFirebaseReportStatus(reportId, newStatus, adminUserId, adminNotes);
+    if (report) {
+      revalidatePath('/admin/reports');
+      return { success: true, message: `Report status updated to ${newStatus}.`, report };
+    }
+    return { success: false, message: "Failed to update report: not found." };
+  } catch (error: any) {
+    return { success: false, message: error.message || "Failed to update report status." };
+  }
+}

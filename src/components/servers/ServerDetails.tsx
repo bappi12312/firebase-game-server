@@ -6,11 +6,12 @@ import type { Server } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2, Star, CalendarClock } from 'lucide-react';
+import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, ClipboardCopy, ServerIcon, AlertCircle, Loader2, Star, CalendarClock, Flag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect, useCallback } from 'react';
 import { FeatureServerDialog } from './FeatureServerDialog'; 
+import { ServerDetailsReportDialog } from './ServerDetailsReportDialog';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
@@ -31,6 +32,8 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const [votedRecently, setVotedRecently] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
   const [isFeatureDialogOpen, setIsFeatureDialogOpen] = useState(false);
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
+
 
   useEffect(() => {
     setServer(initialServerData);
@@ -189,7 +192,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       <CardContent className="p-6 space-y-6">
         <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
             <CardTitle className="text-3xl font-bold text-primary">{server.name || 'Unnamed Server'}</CardTitle>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 <Button onClick={handleCopyIp} variant="outline" size="sm" disabled={!server.ipAddress || !server.port}>
                     <ClipboardCopy className="w-4 h-4 mr-2" />
                     {server.ipAddress && server.port ? `${server.ipAddress}:${server.port}` : 'IP:Port N/A'}
@@ -203,6 +206,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     Connect
                     </a>
                 </Button>
+                 {user && server.status === 'approved' && (
+                    <Button variant="outline" size="sm" onClick={() => setIsReportDialogOpen(true)} className="text-destructive border-destructive hover:bg-destructive/10">
+                        <Flag className="w-4 h-4 mr-2" /> Report
+                    </Button>
+                )}
             </div>
         </div>
 
@@ -249,7 +257,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
           </div>
         )}
 
-        {server.status === 'approved' && !isCurrentlyFeatured && !isIndefinitelyFeatured && (
+        {server.status === 'approved' && !isCurrentlyFeatured && !isIndefinitelyFeatured && user && (
           <div className="mt-6 border-t pt-6">
             <h3 className="text-xl font-semibold mb-2 text-primary">Promote Your Server</h3>
             <p className="text-muted-foreground mb-3">
@@ -301,6 +309,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             </div>
         </CardFooter>
       )}
+       {user && server.id && (
+         <ServerDetailsReportDialog server={server} open={isReportDialogOpen} onOpenChange={setIsReportDialogOpen} />
+       )}
     </Card>
   );
 }
@@ -323,4 +334,3 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
-

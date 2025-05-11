@@ -4,6 +4,12 @@ import { getFirebaseGames } from '@/lib/firebase-data'; // Updated import
 import { auth } from '@/lib/firebase';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server'; // Example if using Clerk, for Firebase we need custom server session or client check
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Submit Server - ServerSpotlight',
+  description: 'Add your game server to our list and gain visibility.',
+};
 
 export default async function SubmitServerPage() {
   // Server-side auth check. For Firebase, this is more complex as `auth.currentUser` is client-side.

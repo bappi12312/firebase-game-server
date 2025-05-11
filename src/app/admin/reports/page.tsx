@@ -1,47 +1,32 @@
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { FileText, Construction } from 'lucide-react';
+import { FileText } from 'lucide-react';
+import { getFirebaseReports } from '@/lib/firebase-data';
+import type { Report } from '@/lib/types';
+import { AdminReportList } from '@/components/admin/AdminReportList';
 
 export const metadata = {
-  title: 'Reports - Admin Dashboard',
+  title: 'Manage Reports - Admin Dashboard',
 };
 
-export default function AdminReportsPage() {
+export default async function AdminReportsPage() {
+  // Fetch all reports initially, or filter by 'pending' if preferred default
+  const reports: Report[] = await getFirebaseReports('all'); 
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-primary flex items-center">
           <FileText className="mr-3 h-8 w-8 text-accent" />
-          Admin Reports
+          Manage Server Reports
         </h1>
       </div>
+      <p className="text-muted-foreground">
+        Review and manage user-submitted reports about servers.
+      </p>
       
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Construction className="mr-2 h-5 w-5 text-muted-foreground" />
-            Feature Under Development
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            The reporting section is currently under development. 
-            Future enhancements will include detailed analytics on server performance, user activity, and platform growth.
-          </p>
-          <div className="mt-6 p-6 bg-secondary/30 rounded-lg">
-            <h3 className="text-lg font-semibold text-primary mb-2">Planned Reports:</h3>
-            <ul className="list-disc list-inside text-muted-foreground space-y-1">
-              <li>Server Submission Trends (by game, by period)</li>
-              <li>Top Voted Servers</li>
-              <li>User Growth & Engagement Metrics</li>
-              <li>Voting Activity Overview</li>
-              <li>Revenue Reports (for featured servers - if PayPal is integrated)</li>
-            </ul>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminReportList initialReports={reports} />
     </div>
   );
 }
 
-export const revalidate = 3600; // Revalidate this page hourly, or make it static if content doesn't change
+export const revalidate = 0; // Revalidate frequently or use revalidatePath in actions

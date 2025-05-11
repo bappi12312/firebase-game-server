@@ -13,6 +13,13 @@ import { AlertCircle, Loader2, User, ListChecks, ThumbsUpIcon, Settings, UploadC
 import Link from 'next/link';
 import { UserSubmittedServerTable } from '@/components/dashboard/UserSubmittedServerTable';
 import { UserVotedServerTable } from '@/components/dashboard/UserVotedServerTable';
+import type { Metadata } from 'next';
+
+
+// Cannot use `export const metadata` in client component.
+// Metadata for client components should be set in parent layout or via Head component if needed.
+// For simplicity, if this page requires unique metadata, consider making it a server component
+// or manage title via `document.title` in `useEffect`.
 
 export default function DashboardPage() {
   const { user, loading: authLoading, userProfile: authContextProfile } = useAuth();
@@ -29,6 +36,10 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    document.title = "My Dashboard - ServerSpotlight";
+  }, []);
+
+  useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login?redirect=/dashboard');
     }
@@ -38,7 +49,7 @@ export default function DashboardPage() {
     if (user) {
       setIsLoadingSubmitted(true);
       setIsLoadingVoted(true);
-      setIsLoadingProfile(true); // Assuming we might want freshest profile data
+      setIsLoadingProfile(true); 
       setError(null);
 
       try {
@@ -80,7 +91,7 @@ export default function DashboardPage() {
   }, [authContextProfile]);
 
 
-  if (authLoading || (!user && !authLoading)) { // Show loading skeleton if auth is loading or redirecting
+  if (authLoading || (!user && !authLoading)) { 
     return (
       <div className="space-y-6">
         <Skeleton className="h-10 w-1/3" />
@@ -102,7 +113,7 @@ export default function DashboardPage() {
     );
   }
   
-  if (!user) { // Should be caught by useEffect redirect, but as a fallback
+  if (!user) { 
     return (
       <Card className="max-w-2xl mx-auto my-12">
         <CardHeader>
