@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useEffect, useState, useTransition, useActionState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, Controller } from 'react-hook-form';
 import type { z } from 'zod';
@@ -10,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { submitServerAction, type SubmitServerFormState } from '@/lib/actions';
-import { serverFormSchema } from '@/lib/schemas'; 
+import { serverFormSchema } from '@/lib/schemas';
 import type { Game } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,9 +19,7 @@ import { Loader2, AlertCircle, UploadCloud, ArrowLeft, CheckCircle, XCircle, Ima
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { storage } from '@/lib/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { v4 as uuidv4 } from 'uuid';
+import { useActionState } from 'react';
 
 type ServerFormValues = z.infer<typeof serverFormSchema>;
 
@@ -35,23 +34,23 @@ const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/web
 
 export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const { toast } = useToast();
-  const { user, loading: authLoading } = useAuth(); 
+  const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  
+
   const initialState: SubmitServerFormState = { message: '', error: false, serverId: null };
   const [currentFormActionState, formAction] = useActionState(submitServerAction, initialState);
   const [isSubmittingForm, startSubmitTransition] = useTransition();
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverFormSchema),
-    defaultValues: { 
+    defaultValues: {
       name: '',
       ipAddress: '',
-      port: 25565, 
+      port: 25565,
       game: '',
       description: '',
-      bannerUrl: '', 
-      logoUrl: '',   
+      bannerUrl: '',
+      logoUrl: '',
       tags: '',
     },
   });
@@ -61,25 +60,22 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
-  const handleClientSideFileUpload = async (
+  const handleApiFileUpload = async (
     file: File,
     type: 'banner' | 'logo',
     setPreviewState: React.Dispatch<React.SetStateAction<string | null>>,
     setIsUploadingState: React.Dispatch<React.SetStateAction<boolean>>,
     formFieldName: 'bannerUrl' | 'logoUrl'
   ) => {
-    console.log(`[Upload] Initiating ${type} upload. File: ${file.name}, Size: ${file.size} bytes`);
+    console.log(`[Upload] Initiating ${type} upload via API. File: ${file.name}, Size: ${file.size} bytes`);
+
     if (!user) {
       toast({ title: "Authentication Error", description: "You must be logged in to upload files.", variant: "destructive" });
       setIsUploadingState(false);
       return;
     }
-    if (!storage) {
-        toast({ title: "Storage Error", description: "Firebase Storage is not available. Cannot upload file.", variant: "destructive" });
-        setIsUploadingState(false);
-        return;
-    }
 
+    // Client-side validation (optional, but good practice)
     if (file.size > MAX_FILE_SIZE_BYTES) {
       toast({ title: "File too large", description: `Max file size is ${MAX_FILE_SIZE_MB}MB. Your file is ${(file.size / (1024*1024)).toFixed(2)}MB.`, variant: "destructive"});
       setIsUploadingState(false);
@@ -94,45 +90,43 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     console.log(`[Upload] Starting ${type}. Setting isUploadingState to true.`);
     setIsUploadingState(true);
     const objectURL = URL.createObjectURL(file);
-    setPreviewState(objectURL); 
+    setPreviewState(objectURL);
+
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      const fileExtension = file.name.split('.').pop() || 'bin';
-      const uniqueFileName = `${type}-${user.uid}-${uuidv4()}.${fileExtension}`;
-      const filePath = `server_assets/${user.uid}/${uniqueFileName}`;
-      
-      console.log(`[Upload] Uploading ${type} to Firebase Storage path: ${filePath}`);
-      const storageRef = ref(storage, filePath);
-      const snapshot = await uploadBytes(storageRef, file);
-      console.log(`[Upload] ${type} uploaded to Firebase Storage successfully. Path: ${snapshot.metadata.fullPath}`);
-      
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log(`[Upload] Success for ${type}. URL: ${downloadURL}. isUploadingState should become false soon (in finally).`);
-      
+      console.log(`[Upload] Sending POST request to /api/upload for ${type}.`);
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+        // Include authorization header if your API route requires it
+        // headers: { 'Authorization': `Bearer ${await user.getIdToken()}` }
+      });
+
+      console.log(`[Upload] Received response for ${type} upload. Status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response from API.' }));
+        throw new Error(errorData?.error || `Upload failed with status ${response.status}`);
+      }
+
+      const result = await response.json();
+      const downloadURL = result.url;
+
+      if (!downloadURL || typeof downloadURL !== 'string') {
+         throw new Error('Invalid URL received from upload API.');
+      }
+
+      console.log(`[Upload] Success for ${type}. URL: ${downloadURL}. Setting form value and showing toast.`);
       form.setValue(formFieldName, downloadURL, { shouldValidate: true });
       toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} Uploaded`, description: "Image ready for submission." });
+
     } catch (error: any) {
-      let errorMessage = "An unknown error occurred during upload.";
-      if (error.code) { 
-        console.error(`[Upload] Firebase Upload Error for ${type} (code: ${error.code}):`, error.message, error);
-        errorMessage = `Firebase Error (${error.code}): ${error.message}`;
-        if (error.code === 'storage/unauthorized') {
-          errorMessage = "Upload failed: You are not authorized to upload files. Please check Firebase Storage rules.";
-        } else if (error.code === 'storage/canceled') {
-          errorMessage = "Upload canceled.";
-        } else if (error.code === 'storage/unknown') {
-          errorMessage = "An unknown storage error occurred. Check your network and Firebase setup.";
-        } else if (error.code === 'storage/quota-exceeded') {
-            errorMessage = "Storage quota exceeded. Cannot upload file.";
-        }
-      } else {
-        console.error(`[Upload] Generic Upload Error for ${type}:`, error.message, error);
-        errorMessage = error.message || "An unknown error occurred during upload.";
-      }
-      console.error(`[Upload] Error for ${type}. isUploadingState should become false soon (in finally). Error details:`, errorMessage);
-      toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: errorMessage, variant: "destructive" });
-      form.setValue(formFieldName, '', { shouldValidate: true }); 
-      setPreviewState(null); 
+      console.error(`[Upload] API Upload Error for ${type}:`, error.message, error);
+      toast({ title: `Failed to Upload ${type.charAt(0).toUpperCase() + type.slice(1)}`, description: error.message || 'An unknown error occurred during upload.', variant: "destructive" });
+      form.setValue(formFieldName, '', { shouldValidate: true });
+      setPreviewState(null);
       if (objectURL) {
         console.log(`[Upload] Revoking objectURL for ${type} due to error: ${objectURL}`);
         URL.revokeObjectURL(objectURL);
@@ -161,11 +155,11 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         });
         return;
     }
-    
+
     const formData = new FormData();
     Object.entries(data).forEach(([key, value]) => {
-       if (value !== undefined && value !== null && value !== '') { 
-        formData.append(key, String(value)); 
+       if (value !== undefined && value !== null && value !== '') {
+        formData.append(key, String(value));
       }
     });
     formData.append('userId', user.uid);
@@ -182,13 +176,19 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
           title: 'Submission Failed',
           description: currentFormActionState.message || 'Please check the form for errors.',
           variant: 'destructive',
+          duration: 5000,
         });
         if (currentFormActionState.errors) {
           currentFormActionState.errors.forEach(err => {
-            if (err.path && typeof err.path === 'string') { 
-              form.setError(err.path as keyof ServerFormValues, { message: err.message });
-            } else if (err.path && Array.isArray(err.path)) {
-              form.setError(err.path.join('.') as keyof ServerFormValues, { message: err.message });
+             // Check if path exists and is an array or string before trying to set error
+             if (err.path) {
+                 const pathKey = Array.isArray(err.path) ? err.path.join('.') : err.path;
+                 // Ensure the pathKey is a valid key of ServerFormValues before setting error
+                 if (pathKey in form.getValues()) {
+                    form.setError(pathKey as keyof ServerFormValues, { message: err.message });
+                 } else {
+                    console.warn(`Attempted to set error on invalid path: ${pathKey}`);
+                 }
             }
           });
         }
@@ -196,8 +196,9 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         toast({
           title: 'Submission Successful!',
           description: currentFormActionState.message || 'Server submitted for review.',
+          duration: 5000,
         });
-        form.reset(); 
+        form.reset();
         if (bannerPreview) {
             console.log("[ServerSubmissionForm] Revoking bannerPreview ObjectURL on successful form submission:", bannerPreview);
             URL.revokeObjectURL(bannerPreview);
@@ -324,10 +325,10 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                   <Controller
                     name="game"
                     control={form.control}
-                    render={({ field: controllerField }) => ( 
-                        <Select 
-                            onValueChange={controllerField.onChange} 
-                            value={controllerField.value} 
+                    render={({ field: controllerField }) => (
+                        <Select
+                            onValueChange={controllerField.onChange}
+                            value={controllerField.value}
                             name={controllerField.name}
                         >
                             <FormControl>
@@ -362,20 +363,20 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                 </FormItem>
               )}
             />
-            
+
             <FormItem>
               <FormLabel htmlFor="banner-upload">Banner Image (Optional)</FormLabel>
               <FormControl>
-                <Input 
+                <Input
                   id="banner-upload"
-                  type="file" 
+                  type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                        handleClientSideFileUpload(file, 'banner', setBannerPreview, setIsUploadingBanner, 'bannerUrl');
+                        handleApiFileUpload(file, 'banner', setBannerPreview, setIsUploadingBanner, 'bannerUrl');
                     }
-                    e.target.value = ''; 
+                    e.target.value = '';
                   }}
                   disabled={isUploadingBanner}
                   className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
@@ -392,16 +393,16 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
             <FormItem>
               <FormLabel htmlFor="logo-upload">Logo Image (Optional)</FormLabel>
               <FormControl>
-                  <Input 
+                  <Input
                     id="logo-upload"
-                    type="file" 
+                    type="file"
                     accept="image/jpeg,image/png,image/webp,image/gif"
                     onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                           handleClientSideFileUpload(file, 'logo', setLogoPreview, setIsUploadingLogo, 'logoUrl');
+                           handleApiFileUpload(file, 'logo', setLogoPreview, setIsUploadingLogo, 'logoUrl');
                         }
-                        e.target.value = ''; 
+                        e.target.value = '';
                     }}
                     disabled={isUploadingLogo}
                     className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
@@ -414,7 +415,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               <FormDescription>Recommended size: 100x100px. Max 5MB. (JPG, PNG, WEBP, GIF)</FormDescription>
               <FormMessage>{form.formState.errors.logoUrl?.message}</FormMessage>
             </FormItem>
-            
+
             <FormField
               control={form.control}
               name="tags"
@@ -430,7 +431,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
               )}
             />
             <div className="flex justify-end pt-2">
-                <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground" 
+                <Button type="submit" className="w-full md:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
                         disabled={isSubmittingForm || isUploadingBanner || isUploadingLogo}>
                    {(isSubmittingForm || isUploadingBanner || isUploadingLogo) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
                    {isSubmittingForm ? 'Submitting...' : (isUploadingBanner || isUploadingLogo) ? 'Uploading...' : 'Submit Server'}
@@ -442,3 +443,4 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
+

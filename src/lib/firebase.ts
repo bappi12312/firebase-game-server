@@ -2,13 +2,13 @@
 import { initializeApp, getApps, getApp, type FirebaseOptions } from 'firebase/app';
 import { getAuth, type Auth, GoogleAuthProvider } from 'firebase/auth'; // Added GoogleAuthProvider
 import { getFirestore, type Firestore } from 'firebase/firestore';
-import { getStorage, type FirebaseStorage } from 'firebase/storage'; // Added for Firebase Storage
+// Removed: import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 const firebaseConfig: FirebaseOptions = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET, // Keep if used for other things, otherwise can remove
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
@@ -20,7 +20,7 @@ function checkFirebaseConfig(config: FirebaseOptions): boolean {
     'apiKey',
     'authDomain',
     'projectId',
-    'storageBucket', // Now required for file uploads
+    // 'storageBucket', // No longer strictly required by this file if not used elsewhere
     'appId',
   ];
   const missingKeys = requiredKeys.filter(key => !config[key]);
@@ -45,15 +45,15 @@ function checkFirebaseConfig(config: FirebaseOptions): boolean {
 let app;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
-let storage: FirebaseStorage | null = null; // Added storage
+// Removed: let storage: FirebaseStorage | null = null;
 
-if (typeof window !== 'undefined') { 
+if (typeof window !== 'undefined') {
   if (checkFirebaseConfig(firebaseConfig)) {
     try {
       app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
       auth = getAuth(app);
       db = getFirestore(app);
-      storage = getStorage(app); // Initialize storage
+      // Removed: storage = getStorage(app);
       // console.log("Firebase initialized successfully (client-side).");
     } catch (error) {
       console.error("Error during Firebase initialization (client-side):", error);
@@ -62,12 +62,12 @@ if (typeof window !== 'undefined') {
     console.warn("Firebase is not initialized (client-side) due to missing or invalid configuration. App functionality requiring Firebase will be affected.");
   }
 } else {
-   if (checkFirebaseConfig(firebaseConfig)) { 
+   if (checkFirebaseConfig(firebaseConfig)) {
     try {
       app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-      auth = getAuth(app); 
+      auth = getAuth(app);
       db = getFirestore(app);
-      storage = getStorage(app); // Initialize storage for server contexts if needed (e.g. Genkit flows)
+      // Removed: storage = getStorage(app);
       // console.log("Firebase initialized (server context - client SDK).");
     } catch (error) {
       console.error("Error during Firebase initialization (server context - client SDK):", error);
@@ -79,4 +79,4 @@ if (typeof window !== 'undefined') {
 
 const googleProvider = auth ? new GoogleAuthProvider() : null;
 
-export { app, auth, db, storage, googleProvider }; // Export storage and googleProvider
+export { app, auth, db, googleProvider }; // Removed storage export
