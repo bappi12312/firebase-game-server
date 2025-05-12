@@ -24,7 +24,14 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
-      // Add Facebook CDN hostname
+      // Add Cloudinary hostname
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+        port: '',
+        pathname: '/**', 
+      },
+      // Add Facebook CDN hostname (if still needed for user profile images etc)
       {
         protocol: 'https',
         hostname: 'scontent.fdac14-1.fna.fbcdn.net',
