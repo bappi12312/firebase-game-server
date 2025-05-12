@@ -1,3 +1,4 @@
+
 import {
   collection,
   addDoc,
@@ -25,19 +26,6 @@ import { db, auth } from './firebase';
 import type { Server, Game, ServerStatus, UserProfile, SortOption, VotedServerInfo, Report, ReportStatus, ReportReason } from './types';
 import { serverFormSchema } from '@/lib/schemas'; 
 
-// Simulate fetching server stats (mock for now, replace with actual Steam Query or similar)
-// TODO: Replace this mock function with a real Steam Query implementation for live server stats.
-export async function fetchMockServerStats(ipAddress: string, port: number): Promise<Partial<Server>> {
-  // console.log(`Mock fetching stats for ${ipAddress}:${port}`);
-  await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 200)); 
-  const isOnline = Math.random() > 0.2; 
-  return {
-    isOnline,
-    playerCount: isOnline ? Math.floor(Math.random() * 50) : 0,
-    maxPlayers: 50 + Math.floor(Math.random() * 50),
-  };
-}
-
 function formatFirebaseError(error: any, context: string): string {
   let message = `Error ${context}: `;
   if (error instanceof Error) {
@@ -45,7 +33,6 @@ function formatFirebaseError(error: any, context: string): string {
     if (firebaseErrorCode === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
       message += `Firestore permission denied. Please check your Firestore security rules to allow this operation. (Original message: ${error.message})`;
     } else if (firebaseErrorCode === 'failed-precondition' && error.message && error.message.toLowerCase().includes('query requires an index')) {
-      // Directly use the error.message from Firebase, as it contains the link and necessary info.
       message = `Error ${context}: Firestore query requires an index. Please create it in the Firebase console. (Original message: ${error.message})`;
     } else if (firebaseErrorCode) {
       message += `Firebase Error (Code: ${firebaseErrorCode}): ${error.message}`;
@@ -59,16 +46,36 @@ function formatFirebaseError(error: any, context: string): string {
   return message; 
 }
 
-const toISODateString = (timestamp: Timestamp | FieldValue | undefined | null): string | null => {
+const toISODateString = (timestamp: Timestamp | FieldValue | undefined | null | string): string | null => {
   if (timestamp instanceof Timestamp) {
     return timestamp.toDate().toISOString();
+  }
+  if (typeof timestamp === 'string') {
+    // Basic check for ISO format, can be more robust
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(timestamp)) {
+       return timestamp;
+    }
+     // Attempt to parse if it's a different date string format recognized by Date constructor
+    const date = new Date(timestamp);
+    if (!isNaN(date.getTime())) {
+        return date.toISOString();
+    }
   }
   return null;
 };
 
-const toRequiredISODateString = (timestamp: Timestamp | FieldValue | undefined | null, fallback = new Date(0).toISOString()): string => {
+const toRequiredISODateString = (timestamp: Timestamp | FieldValue | undefined | null | string, fallback = new Date(0).toISOString()): string => {
   if (timestamp instanceof Timestamp) {
     return timestamp.toDate().toISOString();
+  }
+  if (typeof timestamp === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(timestamp)) {
+       return timestamp;
+    }
+    const date = new Date(timestamp);
+    if (!isNaN(date.getTime())) {
+        return date.toISOString();
+    }
   }
   return fallback;
 };
@@ -94,7 +101,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     return null;
   } catch (error) {
     const specificMessage = formatFirebaseError(error, `getting user profile for UID ${uid}`);
-    console.error(specificMessage, error); // Log here before re-throwing
+    console.error(specificMessage, error); 
     throw new Error(specificMessage);
   }
 }
@@ -128,12 +135,10 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
          return {
             ...data,
             uid: profileSnap.id,
-            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()), // Use current date as fallback for timestamp if serverTimestamp hasn't resolved
+            createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()), 
             emailVerified: data.emailVerified ?? false,
         } as UserProfile;
     }
-     // This part should ideally not be reached if setDoc is successful and profileSnap is re-fetched.
-     // However, as a fallback if profileSnap.exists() is false after setDoc (highly unlikely with merge:true on a new doc).
     console.warn("createUserProfile: profileSnap did not exist after setDoc. Returning constructed profile.");
     return {
         uid: user.uid,
@@ -147,11 +152,7 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
 
   } catch (error: any) {
      let specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
-     if (error.code === 'permission-denied' || (error.message && error.message.toLowerCase().includes('permission denied'))) {
-        specificMessage = `Error creating/updating user profile in Firestore for UID ${user.uid}: Firestore permission denied. Check your security rules for the 'users' collection. (Original message: ${error.message})`;
-     } else {
-       specificMessage = `Error creating user profile in Firestore for UID ${user.uid}: ${error.message || 'Could not save user profile to database.'}`;
-     }
+     // Error message already includes Firebase error code and message due to formatFirebaseError
      console.error(specificMessage, error);
      throw new Error(specificMessage);
   }
@@ -197,6 +198,45 @@ export type ServerDataForCreation = Omit<z.infer<typeof serverFormSchema>, 'tags
   submittedBy: string;
 };
 
+export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
+  // Placeholder for actual server query (e.g., using a Steam Query library or a backend service)
+  // console.log(`Simulating server status query for ${ipAddress}:${port}`);
+
+  // Simulate a delay as a real query would take time
+  await new Promise(resolve => setTimeout(resolve, Math.random() * 700 + 300)); // 300-1000ms delay
+
+  // Simulate some variability but not entirely random for 'realism'
+  // This uses the first character code of IP and port to create a somewhat consistent seed.
+  const baseSeed = (ipAddress.charCodeAt(0) || 1) + port;
+  
+  // Determine if the server is "usually" online based on the seed
+  const isUsuallyOnline = (baseSeed % 10) < 8; // 80% chance of being "usually online"
+  
+  let isOnline = false;
+  let playerCount = 0;
+  let maxPlayers = 50; // Default max players
+
+  if (isUsuallyOnline) {
+    isOnline = Math.random() > 0.15; // If usually online, 85% chance of being actually online now
+    maxPlayers = 50 + (baseSeed % 50); // Max players somewhat consistent for this "server"
+    if (isOnline) {
+      playerCount = Math.floor(Math.random() * (maxPlayers * 0.8)); // Players up to 80% of max
+    }
+  } else {
+    isOnline = Math.random() > 0.85; // If usually offline, 15% chance of being actually online now
+    if (isOnline) {
+      maxPlayers = 30 + (baseSeed % 20); // Lower max players if it's rarely online
+      playerCount = Math.floor(Math.random() * (maxPlayers * 0.5)); // Players up to 50% of max
+    }
+  }
+
+  return {
+    isOnline,
+    playerCount,
+    maxPlayers,
+  };
+}
+
 
 export async function getFirebaseServers(
   gameFilter: string = 'all',
@@ -204,7 +244,7 @@ export async function getFirebaseServers(
   searchTerm: string = '',
   status: ServerStatus | 'all' = 'approved',
   submittedByUserId?: string,
-  count?: number // Optional count for limiting results
+  count?: number 
 ): Promise<Server[]> {
   if (!db) {
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting servers. Database service not available."));
@@ -224,50 +264,53 @@ export async function getFirebaseServers(
       qConstraints.push(where('submittedBy', '==', submittedByUserId));
     }
     
-    qConstraints.push(orderBy('isFeatured', 'desc'));
-    qConstraints.push(orderBy('featuredUntil', 'desc')); 
+    // Always prioritize featured servers if sortBy is 'featured' or by default
+    if (sortBy === 'featured') {
+        qConstraints.push(orderBy('isFeatured', 'desc'));
+        qConstraints.push(orderBy('featuredUntil', 'desc')); 
+        qConstraints.push(orderBy('votes', 'desc'));
+        qConstraints.push(orderBy('playerCount', 'desc')); // Secondary sort for featured
+    } else {
+        // For other sort options, still consider featured status high, then apply specific sort
+        qConstraints.push(orderBy('isFeatured', 'desc'));
+        qConstraints.push(orderBy('featuredUntil', 'desc'));
 
-    let baseOrderByField: keyof Server = 'votes';
-    let baseOrderByDirection: 'asc' | 'desc' = 'desc';
+        let baseOrderByField: keyof Server = 'votes';
+        let baseOrderByDirection: 'asc' | 'desc' = 'desc';
 
-    switch (sortBy) {
-      case 'votes':
-        baseOrderByField = 'votes';
-        baseOrderByDirection = 'desc';
-        break;
-      case 'playerCount':
-        qConstraints.push(orderBy('isOnline', 'desc')); 
-        baseOrderByField = 'playerCount'; 
-        baseOrderByDirection = 'desc';
-        break;
-      case 'name':
-        baseOrderByField = 'name';
-        baseOrderByDirection = 'asc';
-        break;
-      case 'submittedAt':
-        baseOrderByField = 'submittedAt';
-        baseOrderByDirection = 'desc';
-        break;
-      case 'featured': 
-        qConstraints.push(orderBy('votes', 'desc')); 
-        qConstraints.push(orderBy('playerCount', 'desc'));
-        break;
-      default:
-        baseOrderByField = 'votes';
-        baseOrderByDirection = 'desc';
-    }
-    
-    if (sortBy !== 'featured' && baseOrderByField !== 'isFeatured' && baseOrderByField !== 'featuredUntil') {
-      qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
+        switch (sortBy) {
+        case 'votes':
+            baseOrderByField = 'votes';
+            baseOrderByDirection = 'desc';
+            break;
+        case 'playerCount':
+            qConstraints.push(orderBy('isOnline', 'desc')); 
+            baseOrderByField = 'playerCount'; 
+            baseOrderByDirection = 'desc';
+            break;
+        case 'name':
+            baseOrderByField = 'name';
+            baseOrderByDirection = 'asc';
+            break;
+        case 'submittedAt':
+            baseOrderByField = 'submittedAt';
+            baseOrderByDirection = 'desc';
+            break;
+        default: // Should not happen if SortOption is exhaustive
+            baseOrderByField = 'votes';
+            baseOrderByDirection = 'desc';
+        }
+        qConstraints.push(orderBy(baseOrderByField, baseOrderByDirection));
     }
      
-    if (baseOrderByField !== 'name' && sortBy !== 'featured') {
+    // Add a final tie-breaker sort by name if not already the primary sort, for consistent ordering
+    if (sortBy !== 'name') {
       qConstraints.push(orderBy('name', 'asc')); 
     }
 
     if (count && count > 0) {
         qConstraints.push(limit(count));
-    } else if (count !== undefined && count <= 0) { // Explicitly handle count <= 0 if provided
+    } else if (count !== undefined && count <= 0) { 
         return [];
     }
     
@@ -334,7 +377,7 @@ export async function addFirebaseServer(
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "adding Firebase server. Database service not available."));
   }
 
-  const initialStats = await fetchMockServerStats(serverDataInput.ipAddress, serverDataInput.port);
+  const initialStats = await getServerOnlineStatus(serverDataInput.ipAddress, serverDataInput.port);
   
   const dataToSave: { [key: string]: any } = {
     name: serverDataInput.name,
@@ -470,12 +513,15 @@ export async function deleteFirebaseServer(id: string): Promise<void> {
   }
   try {
     const serverDocRef = doc(db, 'servers', id);
+    
+    const batch = writeBatch(db);
+    batch.delete(serverDocRef);
+
     // Also delete reports associated with this server
     const reportsQuery = query(collection(db, 'reports'), where('serverId', '==', id));
     const reportsSnapshot = await getDocs(reportsQuery);
-    const batch = writeBatch(db);
     reportsSnapshot.forEach(reportDoc => batch.delete(reportDoc.ref));
-    batch.delete(serverDocRef);
+    
     await batch.commit();
 
   } catch (error) {
@@ -505,8 +551,6 @@ const staticGames: Game[] = [
 ];
 
 export async function getFirebaseGames(): Promise<Game[]> {
-  // Simulate fetching games from Firestore if they were dynamic
-  // For now, returning static list
   return Promise.resolve([...staticGames]);
 }
 
@@ -555,7 +599,6 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
     const userDocRef = doc(db, 'users', uid);
     batch.delete(userDocRef);
 
-    // Also delete their votes subcollection if it exists
     const votesCollectionRef = collection(db, 'users', uid, 'votes');
     const votesSnapshot = await getDocs(votesCollectionRef);
     votesSnapshot.docs.forEach(voteDoc => batch.delete(voteDoc.ref));
@@ -564,14 +607,6 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
   } catch (error) {
     throw new Error(formatFirebaseError(error, `deleting Firestore data for user (${uid})`));
   }
-}
-
-
-export async function getServerOnlineStatus(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount?: number, maxPlayers?: number}> {
-    // In a real app, this would use a Steam Query library or similar.
-    // For now, using the mock.
-    // TODO: Replace this mock function with a real Steam Query implementation for live server stats.
-    return fetchMockServerStats(ipAddress, port);
 }
 
 // --- Admin Dashboard Stats & Recent Activity ---
@@ -642,7 +677,7 @@ export async function getRecentPendingReports(filterStatus: ReportStatus | 'all'
     if (filterStatus !== 'all') {
       qConstraints.push(where('status', '==', filterStatus));
     }
-    qConstraints.push(limit(count)); // Add limit after checking count
+    qConstraints.push(limit(count)); 
 
     const q = query(reportsCollRef, ...qConstraints);
     const snapshot = await getDocs(q);
@@ -697,17 +732,21 @@ export async function updateServerStatsInFirestore(
       console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
       return;
     }
-    const serverData = serverSnap.data() as Server;
+    const serverData = serverSnap.data(); // No need to cast to Server if only checking status
     if(serverData.status !== 'approved') { 
+        // console.log(`updateServerStatsInFirestore: Server ${serverId} is not approved. Skipping stat update.`);
         return;
     }
 
     const updatePayload: Partial<Server> = {
       isOnline: statsToUpdate.isOnline,
-      playerCount: statsToUpdate.playerCount ?? 0, 
+      playerCount: statsToUpdate.playerCount ?? (serverData.playerCount ?? 0), // Persist old if undefined
     };
+    // Only update maxPlayers if it's provided in statsToUpdate
     if (statsToUpdate.maxPlayers !== undefined) {
       updatePayload.maxPlayers = statsToUpdate.maxPlayers;
+    } else {
+      updatePayload.maxPlayers = serverData.maxPlayers ?? 50; // Persist old or default
     }
     
     await updateDoc(serverRef, updatePayload as { [x: string]: any }); 
@@ -736,7 +775,7 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
     const serverIds = votedServerEntries.map(entry => entry.serverId);
     const votedServersDetails: VotedServerInfo[] = [];
 
-    const batchSize = 30; // Firestore 'in' query limit
+    const batchSize = 30; 
     for (let i = 0; i < serverIds.length; i += batchSize) {
       const serverIdsBatch = serverIds.slice(i, i + batchSize);
       if (serverIdsBatch.length === 0) continue;
@@ -817,7 +856,7 @@ export async function updateServerFeaturedStatus(
     }
 
 
-    await updateDoc(serverDocRef, updates);
+    await updateDoc(serverDocRef, updates as { [key: string]: any });
 
     const updatedDocSnap = await getDoc(serverDocRef);
     if (updatedDocSnap.exists()) {
@@ -842,7 +881,7 @@ export async function updateServerFeaturedStatus(
 }
 
 // --- Report Functions ---
-export async function addFirebaseReport(reportData: Omit<Report, 'id' | 'reportedAt' | 'status'>): Promise<Report> {
+export async function addFirebaseReport(reportData: Omit<Report, 'id' | 'reportedAt' | 'status' | 'resolvedAt' | 'resolvedBy' | 'adminNotes'>): Promise<Report> {
   if (!db) {
     throw new Error(formatFirebaseError({ message: "Firestore (db) is not initialized." }, "adding report. Database service not available."));
   }
@@ -850,6 +889,9 @@ export async function addFirebaseReport(reportData: Omit<Report, 'id' | 'reporte
     ...reportData,
     reportedAt: serverTimestamp() as FieldValue,
     status: 'pending' as ReportStatus,
+    resolvedAt: null,
+    resolvedBy: null,
+    adminNotes: null,
   };
   try {
     const docRef = await addDoc(collection(db, 'reports'), dataToSave);
@@ -877,9 +919,9 @@ export async function getFirebaseReports(filterStatus: ReportStatus | 'all' = 'a
     if (filterStatus !== 'all') {
       qConstraints.push(where('status', '==', filterStatus));
     }
-    if (count && count > 0) { // Ensure count is positive before applying limit
+    if (count && count > 0) { 
       qConstraints.push(limit(count));
-    } else if (count !== undefined && count <=0) { // if count is 0 or negative, return empty
+    } else if (count !== undefined && count <=0) { 
         return [];
     }
 
@@ -915,9 +957,15 @@ export async function updateFirebaseReportStatus(
       resolvedBy: adminUserId,
       resolvedAt: serverTimestamp() as FieldValue,
     };
-    if (adminNotes) {
+    if (adminNotes !== undefined) { // Check for undefined explicitly to allow empty string
       updates.adminNotes = adminNotes;
     }
+    // If status is changed back to pending or investigating, clear resolved fields
+    if (status === 'pending' || status === 'investigating') {
+        updates.resolvedBy = null;
+        updates.resolvedAt = null;
+    }
+
     await updateDoc(reportDocRef, updates as { [x: string]: any });
     
     const updatedDocSnap = await getDoc(reportDocRef);
@@ -935,4 +983,3 @@ export async function updateFirebaseReportStatus(
     throw new Error(formatFirebaseError(error, `updating report status (${reportId} to ${status})`));
   }
 }
-
