@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
@@ -67,15 +66,14 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     setIsUploadingState: React.Dispatch<React.SetStateAction<boolean>>,
     formFieldName: 'bannerUrl' | 'logoUrl'
   ) => {
-    console.log(`[Upload] Initiating ${type} upload via API. File: ${file.name}, Size: ${file.size} bytes`);
+    // console.log(`[Upload] Initiating ${type} upload via API. File: ${file.name}, Size: ${file.size} bytes`);
 
-    if (!user) {
-      toast({ title: "Authentication Error", description: "You must be logged in to upload files.", variant: "destructive" });
+    if (!user || !user.uid) { // Check for user and user.uid
+      toast({ title: "Authentication Error", description: "You must be logged in with a valid user ID to upload files.", variant: "destructive" });
       setIsUploadingState(false);
       return;
     }
 
-    // Client-side validation (optional, but good practice)
     if (file.size > MAX_FILE_SIZE_BYTES) {
       toast({ title: "File too large", description: `Max file size is ${MAX_FILE_SIZE_MB}MB. Your file is ${(file.size / (1024*1024)).toFixed(2)}MB.`, variant: "destructive"});
       setIsUploadingState(false);
@@ -87,24 +85,23 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       return;
     }
 
-    console.log(`[Upload] Starting ${type}. Setting isUploadingState to true.`);
+    // console.log(`[Upload] Starting ${type}. Setting isUploadingState to true.`);
     setIsUploadingState(true);
     const objectURL = URL.createObjectURL(file);
     setPreviewState(objectURL);
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('userId', user.uid); // Include userId in the form data
 
     try {
-      console.log(`[Upload] Sending POST request to /api/upload for ${type}.`);
+      // console.log(`[Upload] Sending POST request to /api/upload for ${type}.`);
       const response = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
-        // Include authorization header if your API route requires it
-        // headers: { 'Authorization': `Bearer ${await user.getIdToken()}` }
       });
 
-      console.log(`[Upload] Received response for ${type} upload. Status: ${response.status}`);
+      // console.log(`[Upload] Received response for ${type} upload. Status: ${response.status}`);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response from API.' }));
@@ -118,7 +115,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
          throw new Error('Invalid URL received from upload API.');
       }
 
-      console.log(`[Upload] Success for ${type}. URL: ${downloadURL}. Setting form value and showing toast.`);
+      // console.log(`[Upload] Success for ${type}. URL: ${downloadURL}. Setting form value and showing toast.`);
       form.setValue(formFieldName, downloadURL, { shouldValidate: true });
       toast({ title: `${type.charAt(0).toUpperCase() + type.slice(1)} Uploaded`, description: "Image ready for submission." });
 
@@ -128,11 +125,11 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
       form.setValue(formFieldName, '', { shouldValidate: true });
       setPreviewState(null);
       if (objectURL) {
-        console.log(`[Upload] Revoking objectURL for ${type} due to error: ${objectURL}`);
+        // console.log(`[Upload] Revoking objectURL for ${type} due to error: ${objectURL}`);
         URL.revokeObjectURL(objectURL);
       }
     } finally {
-      console.log(`[Upload] Finally for ${type}. Setting isUploadingState to false.`);
+      // console.log(`[Upload] Finally for ${type}. Setting isUploadingState to false.`);
       setIsUploadingState(false);
     }
   };
@@ -180,10 +177,8 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         });
         if (currentFormActionState.errors) {
           currentFormActionState.errors.forEach(err => {
-             // Check if path exists and is an array or string before trying to set error
              if (err.path) {
                  const pathKey = Array.isArray(err.path) ? err.path.join('.') : err.path;
-                 // Ensure the pathKey is a valid key of ServerFormValues before setting error
                  if (pathKey in form.getValues()) {
                     form.setError(pathKey as keyof ServerFormValues, { message: err.message });
                  } else {
@@ -200,11 +195,11 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
         });
         form.reset();
         if (bannerPreview) {
-            console.log("[ServerSubmissionForm] Revoking bannerPreview ObjectURL on successful form submission:", bannerPreview);
+            // console.log("[ServerSubmissionForm] Revoking bannerPreview ObjectURL on successful form submission:", bannerPreview);
             URL.revokeObjectURL(bannerPreview);
         }
         if (logoPreview) {
-            console.log("[ServerSubmissionForm] Revoking logoPreview ObjectURL on successful form submission:", logoPreview);
+            // console.log("[ServerSubmissionForm] Revoking logoPreview ObjectURL on successful form submission:", logoPreview);
             URL.revokeObjectURL(logoPreview);
         }
         setBannerPreview(null);
@@ -223,7 +218,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     return (
       <Card className="max-w-2xl mx-auto my-8">
         <CardHeader>
-          <Button onClick={() => router.back()} variant="outline" size="sm" className="mb-4 self-start">
+           <Button onClick={() => router.back()} variant="outline" size="sm" className="mb-4 self-start">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back
             </Button>
@@ -329,7 +324,7 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
                         <Select
                             onValueChange={controllerField.onChange}
                             value={controllerField.value}
-                            name={controllerField.name}
+                            // name={controllerField.name} // Not needed for ShadCN Select
                         >
                             <FormControl>
                             <SelectTrigger>
@@ -443,4 +438,3 @@ export function ServerSubmissionForm({ games }: ServerSubmissionFormProps) {
     </Card>
   );
 }
-
