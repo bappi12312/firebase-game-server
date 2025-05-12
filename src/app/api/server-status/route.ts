@@ -8,7 +8,9 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const ipAddress = searchParams.get('ip');
   const port = searchParams.get('port');
-  const gameType = searchParams.get('gameType') || 'steam'; // Default to steam, allow overrides if needed
+  // Default to 'rust' as this project primarily targets Rust servers.
+  // Allow override via query param if other game types need specific handling in the future.
+  const gameType = searchParams.get('gameType') || 'rust'; 
 
   if (!ipAddress || !port) {
     return NextResponse.json({ error: 'Missing ip or port query parameter' }, { status: 400 });
@@ -23,26 +25,23 @@ export async function GET(request: NextRequest) {
 
   try {
     const state = await GameDig.query({
-      // TODO: Consider mapping game names to appropriate gamedig types if 'steam' isn't always correct
-      type: gameType as any, // Use 'any' for now, refine if game types vary significantly
+      type: gameType as any, // Use 'any' to allow different game types, but default is 'rust'
       host: ipAddress,
       port: portNumber,
       socketTimeout: timeout,
-      // givenPortOnly: true, // Might be needed for some games
+      givenPortOnly: true, // Often helps with Rust and other games
     });
 
     return NextResponse.json({
       isOnline: true,
       playerCount: state.players ? state.players.length : 0,
       maxPlayers: state.maxplayers ?? 0,
-      name: state.name, // Include server name from query if available
-      map: state.map, // Include map if available
-      // Add other relevant fields from 'state' if needed
+      name: state.name,
+      map: state.map,
     });
 
   } catch (error: any) {
-    // console.error(`API: Failed to query server status for ${ipAddress}:${portNumber}:`, error.message);
-    // Return offline status clearly
+    // console.error(`API: Failed to query server status for ${ipAddress}:${portNumber} (Type: ${gameType}):`, error);
     return NextResponse.json({
       isOnline: false,
       playerCount: 0,

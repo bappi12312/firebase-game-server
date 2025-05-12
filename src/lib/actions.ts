@@ -1,3 +1,4 @@
+// src/lib/actions.ts
 'use server';
 
 import { z } from 'zod';
@@ -12,12 +13,14 @@ import {
   updateServerFeaturedStatus,
   addFirebaseReport,
   updateFirebaseReportStatus,
-  type ServerDataForCreation
+  type ServerDataForCreation,
+  updateUserFirebaseRole,
+  deleteFirebaseUserFirestoreData,
 } from './firebase-data';
-import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
+import type { Server, ServerStatus, UserProfile, Report, ReportStatus } from './types';
 import { auth } from './firebase';
 import { serverFormSchema, reportFormSchema, userProfileUpdateSchema } from '@/lib/schemas';
-import { GameDig } from 'gamedig'; // Import gamedig here for server-side use
+import { GameDig } from 'gamedig';
 
 
 // Helper to check for admin role
@@ -38,13 +41,14 @@ export interface SubmitServerFormState {
 
 // Function to get initial server stats using GameDig
 async function getInitialServerStats(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount: number, maxPlayers: number}> {
-   const timeout = 3000; // Reduced timeout for initial check
+   const timeout = 5000; // 5 seconds timeout for initial check
    try {
     const state = await GameDig.query({
-      type: 'steam', // Assuming steam for initial check, might need refinement based on game type
+      type: 'rust', // Specifically for Rust servers as per project focus
       host: ipAddress,
       port: port,
       socketTimeout: timeout,
+      givenPortOnly: true, // Often important for Rust
     });
     return {
       isOnline: true,
@@ -52,7 +56,7 @@ async function getInitialServerStats(ipAddress: string, port: number): Promise<{
       maxPlayers: state.maxplayers ?? 50, // Default if not reported
     };
   } catch (error) {
-    console.warn(`Initial status check failed for ${ipAddress}:${port}:`, error);
+    // console.warn(`Initial status check failed for ${ipAddress}:${port} (Type: rust):`, error);
     return {
       isOnline: false,
       playerCount: 0,
@@ -122,7 +126,6 @@ export async function submitServerAction(
       logoUrl: logoDownloadURL,
       tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
       submittedBy: submittedBy,
-      // Pass initial stats
       initialIsOnline: initialStats.isOnline,
       initialPlayerCount: initialStats.playerCount,
       initialMaxPlayers: initialStats.maxPlayers,
@@ -133,14 +136,15 @@ export async function submitServerAction(
     revalidatePath('/');
     revalidatePath('/servers/submit');
     revalidatePath('/admin/servers');
-    revalidatePath('/dashboard');
+    revalidatePath('/dashboard'); // Revalidate dashboard if user submitted servers are shown there
     return {
         message: `Server "${newServer.name}" submitted successfully! It's now pending review.`,
+        server: newServer, // Return the created server object
         serverId: newServer.id,
         error: false
     };
   } catch (e: any) {
-    console.error("[actions.ts] Submission error in submitServerAction:", e);
+    // console.error("[actions.ts] Submission error in submitServerAction:", e);
     return {
       message: e.message || 'Failed to submit server. Please try again.',
       fields: rawFormDataEntries as Record<string, string | File>,
@@ -153,7 +157,7 @@ export async function submitServerAction(
 
 export async function voteAction(serverId: string, userId: string | undefined): Promise<{ success: boolean; message: string; newVotes?: number; serverId?: string }> {
    if (!auth) {
-    console.warn("[actions.ts] voteAction: Firebase Auth is not initialized.");
+    // console.warn("[actions.ts] voteAction: Firebase Auth is not initialized.");
     return { success: false, message: "Authentication service not available. Please try again later." };
   }
 
@@ -176,7 +180,7 @@ export async function voteAction(serverId: string, userId: string | undefined): 
     }
     return { success: false, message: 'Server not found or unable to vote.' };
   } catch (error: any) {
-    console.error("[actions.ts] Error in voteAction:", error);
+    // console.error("[actions.ts] Error in voteAction:", error);
     return { success: false, message: error.message || "An unexpected error occurred during voting." };
   }
 }
@@ -280,7 +284,7 @@ export async function updateUserProfileAction(
   try {
     const updatedFields = await updateFirebaseUserProfile(userIdFromForm, updates);
     revalidatePath('/profile/settings');
-    revalidatePath('/dashboard');
+    revalidatePath('/dashboard'); // Revalidate dashboard if profile info is shown there
     return { message: 'Profile updated successfully!', error: false, updatedProfile: updatedFields };
   } catch (e: any) {
     return {
@@ -305,6 +309,14 @@ export async function featureServerAction(
   if (!profile) {
     return { success: false, message: "Requesting user profile not found." };
   }
+
+  // Here, you might add logic to check if the user *can* feature a server.
+  // For example, if it's a paid feature, this is where payment processing would occur.
+  // Or, if only admins can feature, or users can only feature their own servers:
+  // const serverToFeature = await getFirebaseServerById(serverId);
+  // if (!serverToFeature || serverToFeature.submittedBy !== requestingUserId && profile.role !== 'admin') {
+  //   return { success: false, message: "You do not have permission to feature this server." };
+  // }
 
 
   try {
@@ -394,8 +406,8 @@ export async function reportServerAction(
       description: parsed.data.description,
     };
     await addFirebaseReport(reportData);
-    revalidatePath(`/servers/${serverId}`);
-    revalidatePath('/admin/reports');
+    revalidatePath(`/servers/${serverId}`); // Revalidate the specific server page
+    revalidatePath('/admin/reports'); // Revalidate admin reports page
     return { message: "Server reported successfully. Our team will review it shortly.", error: false };
   } catch (e: any) {
     return { message: e.message || "Failed to submit report.", error: true };
@@ -416,10 +428,40 @@ export async function resolveReportAction(
     const report = await updateFirebaseReportStatus(reportId, newStatus, adminUserId, adminNotes);
     if (report) {
       revalidatePath('/admin/reports');
+      // Optionally, revalidate the server page if action on report might affect it
+      if (report.serverId) {
+          revalidatePath(`/servers/${report.serverId}`);
+      }
       return { success: true, message: `Report status updated to ${newStatus}.`, report };
     }
     return { success: false, message: "Failed to update report: not found." };
   } catch (error: any) {
     return { success: false, message: error.message || "Failed to update report status." };
+  }
+}
+
+export async function updateUserRoleAction(uid: string, newRole: 'user' | 'admin', adminPerformingActionId: string): Promise<{ success: boolean; message: string }> {
+  if (!adminPerformingActionId || !(await isAdmin(adminPerformingActionId))) {
+    return { success: false, message: "Unauthorized: Admin role required." };
+  }
+  try {
+    await updateUserFirebaseRole(uid, newRole);
+    revalidatePath('/admin/users');
+    return { success: true, message: `User role updated to ${newRole}.` };
+  } catch (error: any) {
+    return { success: false, message: error.message || "Failed to update user role." };
+  }
+}
+
+export async function deleteUserDataAction(uid: string, adminPerformingActionId: string): Promise<{ success: boolean; message: string }> {
+   if (!adminPerformingActionId || !(await isAdmin(adminPerformingActionId))) {
+    return { success: false, message: "Unauthorized: Admin role required." };
+  }
+  try {
+    await deleteFirebaseUserFirestoreData(uid);
+    revalidatePath('/admin/users');
+    return { success: true, message: `User data deleted.` };
+  } catch (error: any) {
+    return { success: false, message: error.message || "Failed to delete user data." };
   }
 }
