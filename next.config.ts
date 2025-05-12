@@ -24,13 +24,13 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
-      // Example for a known CDN if needed:
-      // {
-      //   protocol: 'https',
-      //   hostname: 'scontent.fdac14-1.fna.fbcdn.net',
-      //   port: '',
-      //   pathname: '/**',
-      // },
+      // Add Facebook CDN hostname
+      {
+        protocol: 'https',
+        hostname: 'scontent.fdac14-1.fna.fbcdn.net',
+        port: '',
+        pathname: '/**',
+      },
       // Avoid overly broad patterns like http://** or https://**
     ],
   },
