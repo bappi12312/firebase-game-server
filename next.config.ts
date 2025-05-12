@@ -17,26 +17,21 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
-      {
-        protocol: 'https',
-        hostname: 'scontent.fdac14-1.fna.fbcdn.net', 
-        port: '',
-        pathname: '/**',
-      },
+      // Keep specific necessary hostnames like Firebase Storage
       {
         protocol: 'https', // For Firebase Storage
         hostname: 'firebasestorage.googleapis.com',
         port: '',
         pathname: '/**',
       },
-      {
-        protocol: 'http', 
-        hostname: '**', 
-      },
-      {
-        protocol: 'https', 
-        hostname: '**', 
-      }
+      // Example for a known CDN if needed:
+      // {
+      //   protocol: 'https',
+      //   hostname: 'scontent.fdac14-1.fna.fbcdn.net',
+      //   port: '',
+      //   pathname: '/**',
+      // },
+      // Avoid overly broad patterns like http://** or https://**
     ],
   },
 };

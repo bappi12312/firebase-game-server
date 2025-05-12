@@ -13,7 +13,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useState, useTransition, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
+// Removed: import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data'; - Now handled by API
+import { updateServerStatsInFirestore } from '@/lib/firebase-data'; // Keep this for updating stats after API fetch
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -26,48 +27,78 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [isPending, startTransition] = useTransition();
-  
+
   const [serverData, setServerData] = useState(initialServer);
-  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as loading initially
   const [votedRecently, setVotedRecently] = useState(false);
 
   useEffect(() => {
-    setServerData(initialServer); 
+    // Reset state when initialServer changes
+    setServerData(initialServer);
+    setIsLoadingStats(true); // Reset loading state when server prop changes
   }, [initialServer]);
 
   const fetchStats = useCallback(async () => {
-    if (serverData.status === 'approved' && serverData.ipAddress && serverData.port) {
-      setIsLoadingStats(true);
-      try {
-        const stats = await getServerOnlineStatus(serverData.ipAddress, serverData.port);
-        setServerData(prevServer => ({ ...prevServer, ...stats }));
-        if (serverData.id) { // Ensure serverData.id is defined
-          updateServerStatsInFirestore(serverData.id, stats)
-            .catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
-        }
-      } catch (error) {
-        console.error(`Failed to fetch server stats for card ${serverData.name}:`, error);
-        setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0, maxPlayers: prevServer.maxPlayers || 0 }));
-      } finally {
-        setIsLoadingStats(false);
+    if (serverData.status !== 'approved' || !serverData.ipAddress || !serverData.port || !serverData.id) {
+      setIsLoadingStats(false); // Stop loading if server is not approved or info missing
+      // Ensure default offline state if not approved
+       setServerData(prevServer => ({
+         ...prevServer,
+         isOnline: prevServer.isOnline ?? false, // Use existing or default to false
+         playerCount: prevServer.playerCount ?? 0,
+         maxPlayers: prevServer.maxPlayers ?? 0,
+       }));
+      return;
+    }
+
+    // Set loading true only if we are actually going to fetch
+    setIsLoadingStats(true);
+
+    try {
+      const response = await fetch(`/api/server-status?ip=${encodeURIComponent(serverData.ipAddress)}&port=${serverData.port}`);
+      if (!response.ok) {
+        // Try to parse error from response body
+        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch status, invalid response from API.' }));
+        throw new Error(errorData?.error || `API request failed with status ${response.status}`);
       }
-    } else if (serverData.status !== 'approved') {
-      setServerData(prevServer => ({ 
-        ...prevServer, 
-        isOnline: prevServer.isOnline ?? false, 
-        playerCount: prevServer.playerCount ?? 0, 
-        maxPlayers: prevServer.maxPlayers ?? 0 
-      }));
+
+      const stats = await response.json();
+
+      // Update local state
+      setServerData(prevServer => ({
+          ...prevServer,
+          isOnline: stats.isOnline,
+          playerCount: stats.playerCount,
+          maxPlayers: stats.maxPlayers,
+          // Optionally update name/map if returned by API
+          // name: stats.name || prevServer.name,
+       }));
+
+       // Update stats in Firestore asynchronously (don't wait for it)
+       updateServerStatsInFirestore(serverData.id, {
+           isOnline: stats.isOnline,
+           playerCount: stats.playerCount,
+           maxPlayers: stats.maxPlayers,
+       }).catch(err => console.error(`Error updating server stats in Firestore from ServerCard for ${serverData.id}:`, err));
+
+    } catch (error: any) {
+      console.error(`Failed to fetch server stats via API for ${serverData.name}:`, error.message);
+      // Set to offline on error
+      setServerData(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
+    } finally {
       setIsLoadingStats(false);
     }
-  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name]); 
+  }, [serverData.id, serverData.ipAddress, serverData.port, serverData.status, serverData.name]); // Dependencies
 
 
   useEffect(() => {
-    fetchStats(); 
-    const intervalId = setInterval(fetchStats, 60000); 
+    // Initial fetch
+    fetchStats();
+    // Set up interval
+    const intervalId = setInterval(fetchStats, 60000); // Fetch every 60 seconds
+    // Cleanup interval on component unmount or when dependencies change
     return () => clearInterval(intervalId);
-  }, [fetchStats]);
+  }, [fetchStats]); // Rerun effect if fetchStats function changes (due to dependency change)
 
 
   const handleVote = async () => {
@@ -81,30 +112,34 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
       return;
     }
     if (votedRecently || isPending) return;
-    setVotedRecently(true); 
+
+    if (!serverData.id) {
+        toast({ title: "Error", description: "Server ID missing, cannot vote.", variant: "destructive"});
+        return;
+    }
+
+    setVotedRecently(true); // Disable button immediately
 
     startTransition(async () => {
-      if (!serverData.id) {
-        toast({ title: "Error", description: "Server ID missing, cannot vote.", variant: "destructive"});
-        setVotedRecently(false);
-        return;
-      }
       try {
-        const result = await voteAction(serverData.id, user.uid); 
-        if (result.success && result.newVotes !== undefined) {
+        const result = await voteAction(serverData.id, user.uid);
+        if (result.success && result.newVotes !== undefined && result.serverId === serverData.id) {
           toast({
             title: 'Vote Cast!',
             description: result.message,
           });
+          // Update local state immediately for responsiveness
           setServerData(prev => ({...prev, votes: result.newVotes!}));
           if(onVote) onVote(serverData.id, result.newVotes);
+           // Keep button disabled for a short period after success before cooldown check takes over
+          setTimeout(() => setVotedRecently(false), 1000); // Reset visual disabled state slightly faster
         } else {
           toast({
             title: 'Vote Failed',
             description: result.message || 'Could not cast vote.',
             variant: 'destructive',
           });
-          setVotedRecently(false); 
+          setVotedRecently(false); // Re-enable button on failure
         }
       } catch (e: any) {
          toast({
@@ -112,13 +147,15 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             description: e.message || 'An unexpected error occurred.',
             variant: 'destructive',
           });
-        setVotedRecently(false);
+        setVotedRecently(false); // Re-enable button on error
       }
     });
-    setTimeout(() => setVotedRecently(false), 60000); 
+    // Actual cooldown check is handled by the backend, but this prevents spam clicking
+    // We reset votedRecently visual state after 1 second, the backend enforces the real cooldown
+     setTimeout(() => { if (!isPending) setVotedRecently(false); }, 1000);
   };
 
-  const voteButtonDisabled = isPending || votedRecently || authLoading;
+  const voteButtonDisabled = isPending || votedRecently || authLoading || serverData.status !== 'approved';
   const voteButtonText = authLoading ? <Loader2 className="animate-spin" /> : (isPending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote'));
 
   const isCurrentlyFeatured = serverData.isFeatured && serverData.featuredUntil && new Date(serverData.featuredUntil) > new Date();
@@ -137,7 +174,8 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
               height={150}
               className="w-full h-36 object-cover hover:opacity-90 transition-opacity"
               data-ai-hint="game landscape"
-              unoptimized={serverData.bannerUrl.startsWith('http://') || !serverData.bannerUrl.startsWith('https://')} 
+              unoptimized={serverData.bannerUrl.startsWith('http://') || !serverData.bannerUrl.startsWith('https://')}
+              onError={(e) => { e.currentTarget.src = `https://picsum.photos/seed/${serverData.id}/400/150`; e.currentTarget.srcset = "" }}
             />
           ) : (
             <div className="w-full h-36 bg-secondary flex items-center justify-center hover:opacity-90 transition-opacity" data-ai-hint="abstract pattern">
@@ -155,6 +193,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 className="rounded"
                 data-ai-hint="game icon"
                 unoptimized={serverData.logoUrl.startsWith('http://') || !serverData.logoUrl.startsWith('https://')}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }} // Hide logo if it fails to load
             />
            </div>
         )}
@@ -190,6 +229,16 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 {serverData.playerCount}/{serverData.maxPlayers}
               </Badge>
             )}
+             {!isLoadingStats && !serverData.isOnline && serverData.status === 'approved' && (
+                 <Badge variant="destructive" className="ml-auto opacity-70">
+                    Offline
+                </Badge>
+            )}
+             {serverData.status !== 'approved' && (
+                <Badge variant={serverData.status === 'pending' ? 'secondary' : 'destructive'} className="ml-auto opacity-80">
+                   {serverData.status.charAt(0).toUpperCase() + serverData.status.slice(1)}
+                </Badge>
+             )}
           </div>
           <p className="line-clamp-2 text-foreground/80">{serverData.description}</p>
         </div>
@@ -218,11 +267,11 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
             <TooltipProvider>
             <Tooltip delayDuration={200}>
                 <TooltipTrigger asChild>
-                <span> 
-                    <Button 
-                    onClick={handleVote} 
-                    disabled={voteButtonDisabled || serverData.status !== 'approved'} 
-                    size="sm" 
+                <span>
+                    <Button
+                    onClick={handleVote}
+                    disabled={voteButtonDisabled}
+                    size="sm"
                     className="border-accent text-accent bg-transparent hover:bg-accent hover:text-accent-foreground disabled:opacity-70 disabled:cursor-not-allowed"
                     aria-label={!user && !authLoading ? "Login to vote" : (serverData.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
                     >
@@ -237,7 +286,7 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
                 )}
                 {votedRecently && user?.uid && (
                 <TooltipContent>
-                    <p>You've voted recently for this server!</p>
+                    <p>Vote cooldown active or processing...</p>
                 </TooltipContent>
                 )}
                 {serverData.status !== 'approved' && user?.uid && (
@@ -252,4 +301,3 @@ export function ServerCard({ server: initialServer, onVote }: ServerCardProps) {
     </Card>
   );
 }
-

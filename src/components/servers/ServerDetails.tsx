@@ -10,13 +10,14 @@ import { Gamepad2, Users, ThumbsUp, CheckCircle2, XCircle, Info, ExternalLink, C
 import { useToast } from '@/hooks/use-toast';
 import { voteAction } from '@/lib/actions';
 import { useState, useTransition, useEffect, useCallback } from 'react';
-import { FeatureServerDialog } from './FeatureServerDialog'; 
+import { FeatureServerDialog } from './FeatureServerDialog';
 import { ServerDetailsReportDialog } from './ServerDetailsReportDialog';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
+// Removed: import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
+import { updateServerStatsInFirestore } from '@/lib/firebase-data'; // Keep this
 import { useRouter } from 'next/navigation';
 
 interface ServerDetailsProps {
@@ -27,9 +28,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  
+
   const [server, setServer] = useState(initialServerData);
-  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as loading
   const [isVotePending, startVoteTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
@@ -40,10 +41,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
   useEffect(() => {
     setServer(initialServerData);
+    setIsLoadingStats(true); // Reset loading on prop change
   }, [initialServerData]);
 
   useEffect(() => {
-    if (server.submittedAt && typeof server.submittedAt === 'string') { 
+    if (server.submittedAt && typeof server.submittedAt === 'string') {
       try {
         setTimeAgo(formatDistanceToNow(new Date(server.submittedAt), { addSuffix: true }));
       } catch (e) {
@@ -56,29 +58,55 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   }, [server.submittedAt]);
 
   const fetchAndUpdateStats = useCallback(async () => {
-    if (server.id && server.status === 'approved' && server.ipAddress && server.port) {
-        setIsLoadingStats(true);
-        try {
-            const stats = await getServerOnlineStatus(server.ipAddress, server.port);
-            setServer(prevServer => ({ ...prevServer, ...stats }));
-            if (server.id) { // Check id again as it's a dependency
-                updateServerStatsInFirestore(server.id, stats)
-                    .catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
-            }
-        } catch (error) {
-            console.error(`Failed to fetch server stats for ${server.name}:`, error);
-            setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
-        } finally {
-            setIsLoadingStats(false);
-        }
-    } else {
-        setIsLoadingStats(false); 
+    if (server.status !== 'approved' || !server.ipAddress || !server.port || !server.id) {
+      setIsLoadingStats(false);
+      // Set defaults if not approved
+       setServer(prevServer => ({
+         ...prevServer,
+         isOnline: prevServer.isOnline ?? false,
+         playerCount: prevServer.playerCount ?? 0,
+         maxPlayers: prevServer.maxPlayers ?? 0,
+       }));
+      return;
     }
-  }, [server.id, server.ipAddress, server.port, server.status, server.name]);
+
+    setIsLoadingStats(true);
+
+    try {
+      const response = await fetch(`/api/server-status?ip=${encodeURIComponent(server.ipAddress)}&port=${server.port}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch status, invalid response from API.' }));
+        throw new Error(errorData?.error || `API request failed with status ${response.status}`);
+      }
+      const stats = await response.json();
+
+      // Update local state first
+      setServer(prevServer => ({
+          ...prevServer,
+          isOnline: stats.isOnline,
+          playerCount: stats.playerCount,
+          maxPlayers: stats.maxPlayers,
+          // name: stats.name || prevServer.name, // Optional update
+      }));
+
+      // Then update Firestore asynchronously
+      updateServerStatsInFirestore(server.id, {
+          isOnline: stats.isOnline,
+          playerCount: stats.playerCount,
+          maxPlayers: stats.maxPlayers,
+      }).catch(err => console.error(`Error updating server stats in Firestore from ServerDetails for ${server.id}:`, err));
+
+    } catch (error: any) {
+      console.error(`Failed to fetch server stats via API for ${server.name}:`, error.message);
+      setServer(prevServer => ({ ...prevServer, isOnline: false, playerCount: 0 }));
+    } finally {
+      setIsLoadingStats(false);
+    }
+  }, [server.id, server.ipAddress, server.port, server.status, server.name]); // Dependencies
 
   useEffect(() => {
     fetchAndUpdateStats();
-    const intervalId = setInterval(fetchAndUpdateStats, 30000); 
+    const intervalId = setInterval(fetchAndUpdateStats, 30000); // Fetch every 30 seconds
     return () => clearInterval(intervalId);
   }, [fetchAndUpdateStats]);
 
@@ -122,7 +150,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       return;
     }
     if (votedRecently || isVotePending) return;
-    
+
     if (!server.id) {
       toast({ title: 'Error', description: 'Server ID is missing. Cannot vote.', variant: 'destructive' });
       return;
@@ -131,20 +159,21 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
     startVoteTransition(async () => {
       try {
-        const result = await voteAction(server.id, user.uid); 
-        if (result.success && result.newVotes !== undefined) {
+        const result = await voteAction(server.id, user.uid);
+        if (result.success && result.newVotes !== undefined && result.serverId === server.id) {
           toast({
             title: 'Vote Cast!',
             description: result.message,
           });
           setServer(prev => ({...prev, votes: result.newVotes!}));
+           setTimeout(() => setVotedRecently(false), 1000);
         } else {
           toast({
             title: 'Vote Failed',
             description: result.message || 'Could not cast vote.',
             variant: 'destructive',
           });
-          setVotedRecently(false); 
+          setVotedRecently(false);
         }
       } catch (e: any) {
         toast({
@@ -155,9 +184,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         setVotedRecently(false);
       }
     });
-    setTimeout(() => setVotedRecently(false), 60000); 
+     setTimeout(() => { if (!isVotePending) setVotedRecently(false); }, 1000);
   };
-  
+
   const voteButtonDisabled = isVotePending || votedRecently || authLoading || !user?.uid || server.status !== 'approved';
   const voteButtonText = isVotePending ? 'Voting...' : (votedRecently ? 'Voted!' : 'Vote for this Server');
 
@@ -165,23 +194,23 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const isIndefinitelyFeatured = server.isFeatured && !server.featuredUntil;
 
   const handleFeatureSuccess = (updatedServer: Server) => {
-    setServer(updatedServer); 
+    setServer(updatedServer);
   };
-  
-  const infoCardsData = [
+
+  const infoCards = [
     { key: 'game', Icon: Gamepad2, label: "Game", value: server.game || 'N/A' },
-    { 
-      key: 'status', 
-      Icon: isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle), 
-      label: "Status", 
+    {
+      key: 'status',
+      Icon: isLoadingStats ? Loader2 : (server.isOnline ? CheckCircle2 : XCircle),
+      label: "Status",
       value: isLoadingStats ? 'Updating...' : (server.isOnline ? 'Online' : 'Offline'),
       iconClassName: isLoadingStats ? 'animate-spin text-muted-foreground' : (server.isOnline ? 'text-green-500' : 'text-red-500')
     },
-    { 
+    {
       key: 'players',
-      Icon: isLoadingStats ? Loader2 : Users, 
-      label: "Players", 
-      value: isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount ?? 0} / ${server.maxPlayers ?? 0}` : 'N/A'), 
+      Icon: isLoadingStats ? Loader2 : Users,
+      label: "Players",
+      value: isLoadingStats ? '...' : (server.isOnline ? `${server.playerCount ?? 0} / ${server.maxPlayers ?? 0}` : 'N/A'),
       iconClassName: isLoadingStats ? 'animate-spin text-muted-foreground' : 'text-accent'
     },
     { key: 'votes', Icon: ThumbsUp, label: "Votes", value: String(server.votes ?? 0) },
@@ -189,19 +218,19 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   ];
 
   if (server.status !== 'approved') {
-    infoCardsData.push({ 
-      key: 'serverStatus', 
-      Icon: AlertCircle, 
-      label: "Server Status", 
-      value: server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown', 
+    infoCards.push({
+      key: 'serverStatus',
+      Icon: AlertCircle,
+      label: "Server Status",
+      value: server.status ? server.status.charAt(0).toUpperCase() + server.status.slice(1) : 'Unknown',
       iconClassName: server.status === 'pending' ? 'text-yellow-500' : server.status === 'rejected' ? 'text-red-500' : 'text-muted-foreground'
     });
   }
   if (isCurrentlyFeatured && server.featuredUntil) {
-    infoCardsData.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
+    infoCards.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
   }
   if (isIndefinitelyFeatured) {
-    infoCardsData.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
+    infoCards.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
   }
 
 
@@ -218,6 +247,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
             data-ai-hint="gameplay screenshot"
             priority
             unoptimized={server.bannerUrl.startsWith('http://') || !server.bannerUrl.startsWith('https://')}
+            onError={(e) => { e.currentTarget.src = `https://picsum.photos/seed/${server.id}/1200/300`; e.currentTarget.srcset = "" }}
           />
         ) : (
           <div className="w-full h-48 md:h-64 bg-secondary flex items-center justify-center" data-ai-hint="abstract design">
@@ -234,6 +264,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 className="rounded-md"
                 data-ai-hint="server logo"
                 unoptimized={server.logoUrl.startsWith('http://') || !server.logoUrl.startsWith('https://')}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
            </div>
         )}
@@ -261,8 +292,8 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                   <Tooltip>
                     <TooltipTrigger asChild>
                         <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
-                            <a 
-                            href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'} 
+                            <a
+                            href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'}
                             target="_blank" // Good practice for external protocols
                             rel="noopener noreferrer" // Security for target="_blank"
                             title={server.ipAddress && server.port ? "Connect via Steam (requires Steam client)" : "Connection info missing"}
@@ -274,7 +305,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                        {server.ipAddress && server.port ? 
+                        {server.ipAddress && server.port ?
                           <p>Connect directly to the server using Steam. Requires Steam client installed.</p> :
                           <p>Server IP or Port missing, cannot generate Steam connect link.</p>
                         }
@@ -290,11 +321,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          {infoCardsData.map(({ key, Icon, label, value, iconClassName }) => (
-            <InfoCard key={key} Icon={Icon} label={label} value={value} iconClassName={iconClassName} />
-          ))}
+          {infoCards.map(({ key, ...cardProps }) => <InfoCard key={key} {...cardProps} />)}
         </div>
-        
+
         <div>
           <h3 className="text-xl font-semibold mb-2 text-primary">Description</h3>
           <p className="text-foreground/80 whitespace-pre-wrap">{server.description || 'No description provided.'}</p>
@@ -337,9 +366,9 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                 <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
                     <span> {/* Span is needed for disabled button tooltip */}
-                        <Button 
-                        onClick={handleVote} 
-                        disabled={voteButtonDisabled} 
+                        <Button
+                        onClick={handleVote}
+                        disabled={voteButtonDisabled}
                         className="w-full sm:w-auto bg-accent hover:bg-accent/90 text-accent-foreground"
                         aria-label={!user?.uid && !authLoading ? "Login to vote" : (server.status !== 'approved' ? "Server not approved for voting" : "Vote for this server")}
                         >
@@ -360,7 +389,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                     )}
                     {votedRecently && user?.uid && server.status === 'approved' && (
                     <TooltipContent>
-                        <p>You've voted recently!</p>
+                        <p>Vote cooldown active or processing...</p>
                     </TooltipContent>
                     )}
                 </Tooltip>
@@ -393,5 +422,3 @@ function InfoCard({ Icon, label, value, iconClassName }: InfoCardProps) {
     </div>
   );
 }
-
-    

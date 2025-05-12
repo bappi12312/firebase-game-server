@@ -2,8 +2,8 @@
 
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
-import { 
-  addFirebaseServer, 
+import {
+  addFirebaseServer,
   voteForFirebaseServer,
   updateFirebaseServerStatus,
   deleteFirebaseServer as deleteFirebaseServerData,
@@ -17,6 +17,7 @@ import {
 import type { Server, ServerStatus, UserProfile, Report, ReportStatus, ReportReason } from './types';
 import { auth } from './firebase';
 import { serverFormSchema, reportFormSchema, userProfileUpdateSchema } from '@/lib/schemas';
+import { GameDig } from 'gamedig'; // Import gamedig here for server-side use
 
 
 // Helper to check for admin role
@@ -28,33 +29,59 @@ async function isAdmin(userId: string): Promise<boolean> {
 
 export interface SubmitServerFormState {
   message: string;
-  fields?: Record<string, string | number | File | null>; 
-  server?: Server; 
-  serverId?: string | null; 
+  fields?: Record<string, string | number | File | null>;
+  server?: Server;
+  serverId?: string | null;
   error?: boolean;
   errors?: { path: string | (string|number)[]; message: string }[];
 }
 
+// Function to get initial server stats using GameDig
+async function getInitialServerStats(ipAddress: string, port: number): Promise<{isOnline: boolean, playerCount: number, maxPlayers: number}> {
+   const timeout = 3000; // Reduced timeout for initial check
+   try {
+    const state = await GameDig.query({
+      type: 'steam', // Assuming steam for initial check, might need refinement based on game type
+      host: ipAddress,
+      port: port,
+      socketTimeout: timeout,
+    });
+    return {
+      isOnline: true,
+      playerCount: state.players ? state.players.length : 0,
+      maxPlayers: state.maxplayers ?? 50, // Default if not reported
+    };
+  } catch (error) {
+    console.warn(`Initial status check failed for ${ipAddress}:${port}:`, error);
+    return {
+      isOnline: false,
+      playerCount: 0,
+      maxPlayers: 50, // Default max players for offline/failed check
+    };
+  }
+}
+
+
 export async function submitServerAction(
-  prevState: SubmitServerFormState, 
+  prevState: SubmitServerFormState,
   formData: FormData
 ): Promise<SubmitServerFormState> {
   const rawFormDataEntries = Object.fromEntries(formData.entries());
   const userId = formData.get('userId') as string | null;
 
   if (!userId) {
-    return { 
-      message: "User information not provided. You must be logged in to submit a server.", 
-      error: true, 
-      fields: rawFormDataEntries as Record<string, string | File>, // Type assertion might be too broad
+    return {
+      message: "User information not provided. You must be logged in to submit a server.",
+      error: true,
+      fields: rawFormDataEntries as Record<string, string | File>,
       serverId: null,
     };
   }
-  
+
   // Prepare data for Zod parsing, excluding userId
   const zodParseData: Record<string, any> = {};
   for (const key in rawFormDataEntries) {
-    if (key !== 'userId') { 
+    if (key !== 'userId') {
       zodParseData[key] = rawFormDataEntries[key];
     }
   }
@@ -62,50 +89,55 @@ export async function submitServerAction(
   // Explicitly parse port to number for Zod
   if (typeof zodParseData.port === 'string') {
     const parsedPort = parseInt(zodParseData.port, 10);
-    // Zod will handle NaN or if it's not a valid number / missing
-    zodParseData.port = isNaN(parsedPort) ? undefined : parsedPort; 
+    zodParseData.port = isNaN(parsedPort) ? undefined : parsedPort;
   }
-  
+
   const parsed = serverFormSchema.safeParse(zodParseData);
 
   if (!parsed.success) {
     return {
       message: 'Invalid form data. Please check the fields.',
-      fields: rawFormDataEntries as Record<string, string | File>, 
+      fields: rawFormDataEntries as Record<string, string | File>,
       error: true,
       errors: parsed.error.errors.map(err => ({ path: err.path, message: err.message })),
       serverId: null,
     };
   }
-  
+
   const submittedBy = userId;
-  // Use parsed data which now has correct types (empty string for optional URLs if not provided)
   const bannerDownloadURL = parsed.data.bannerUrl || undefined;
   const logoDownloadURL = parsed.data.logoUrl || undefined;
 
   try {
+    // Fetch initial server stats before saving
+    const initialStats = await getInitialServerStats(parsed.data.ipAddress, parsed.data.port);
+
     const dataToSave: ServerDataForCreation = {
       name: parsed.data.name,
       ipAddress: parsed.data.ipAddress,
-      port: parsed.data.port, 
+      port: parsed.data.port,
       game: parsed.data.game,
       description: parsed.data.description,
-      bannerUrl: bannerDownloadURL, // Already string or undefined
-      logoUrl: logoDownloadURL,   // Already string or undefined
+      bannerUrl: bannerDownloadURL,
+      logoUrl: logoDownloadURL,
       tags: parsed.data.tags ? parsed.data.tags.split(',').map(tag => tag.trim()).filter(tag => tag) : [],
       submittedBy: submittedBy,
+      // Pass initial stats
+      initialIsOnline: initialStats.isOnline,
+      initialPlayerCount: initialStats.playerCount,
+      initialMaxPlayers: initialStats.maxPlayers,
     };
-    
+
     const newServer = await addFirebaseServer(dataToSave);
-    
-    revalidatePath('/'); 
-    revalidatePath('/servers/submit'); 
-    revalidatePath('/admin/servers'); 
+
+    revalidatePath('/');
+    revalidatePath('/servers/submit');
+    revalidatePath('/admin/servers');
     revalidatePath('/dashboard');
-    return { 
-        message: `Server "${newServer.name}" submitted successfully! It's now pending review.`, 
+    return {
+        message: `Server "${newServer.name}" submitted successfully! It's now pending review.`,
         serverId: newServer.id,
-        error: false 
+        error: false
     };
   } catch (e: any) {
     console.error("[actions.ts] Submission error in submitServerAction:", e);
@@ -128,7 +160,7 @@ export async function voteAction(serverId: string, userId: string | undefined): 
   if (!serverId) {
     return { success: false, message: 'Server ID is required.' };
   }
-  
+
   if (!userId) {
     return { success: false, message: "You must be logged in to vote." };
   }
@@ -136,10 +168,10 @@ export async function voteAction(serverId: string, userId: string | undefined): 
   try {
     const updatedServer = await voteForFirebaseServer(serverId, userId);
     if (updatedServer) {
-      revalidatePath('/'); 
-      revalidatePath(`/servers/${serverId}`); 
-      revalidatePath('/admin/servers'); 
-      revalidatePath('/dashboard'); 
+      revalidatePath('/');
+      revalidatePath(`/servers/${serverId}`);
+      revalidatePath('/admin/servers');
+      revalidatePath('/dashboard');
       return { success: true, message: `Voted for ${updatedServer.name}!`, newVotes: updatedServer.votes, serverId: serverId };
     }
     return { success: false, message: 'Server not found or unable to vote.' };
@@ -176,7 +208,7 @@ export async function rejectServerAction(serverId: string, adminUserId?: string)
     const server = await updateFirebaseServerStatus(serverId, 'rejected');
      if (server) {
       revalidatePath('/admin/servers');
-      revalidatePath(`/servers/${serverId}`); 
+      revalidatePath(`/servers/${serverId}`);
       revalidatePath('/');
       revalidatePath('/dashboard');
       return { success: true, message: `Server "${server.name}" rejected.`, server };
@@ -194,7 +226,7 @@ export async function deleteServerAction(serverId: string, adminUserId?: string)
   try {
     await deleteFirebaseServerData(serverId);
     revalidatePath('/admin/servers');
-    revalidatePath('/'); 
+    revalidatePath('/');
     revalidatePath('/dashboard');
     return { success: true, message: "Server deleted successfully." };
   } catch (error: any) {
@@ -213,8 +245,8 @@ export async function updateUserProfileAction(
   prevState: UpdateUserProfileFormState,
   formData: FormData
 ): Promise<UpdateUserProfileFormState> {
-  const userIdFromForm = formData.get('userId') as string | null; 
-  
+  const userIdFromForm = formData.get('userId') as string | null;
+
   if (!userIdFromForm) {
      return { message: "User information not provided. Cannot update profile.", error: true };
   }
@@ -222,7 +254,7 @@ export async function updateUserProfileAction(
   const rawFormData = Object.fromEntries(formData.entries());
   // Ensure userId is not part of Zod parsing
   const parseableProfileData = {...rawFormData};
-  delete parseableProfileData.userId; 
+  delete parseableProfileData.userId;
 
   const parsed = userProfileUpdateSchema.safeParse(parseableProfileData);
 
@@ -242,13 +274,13 @@ export async function updateUserProfileAction(
 
 
   if (Object.keys(updates).length === 0) {
-     return { message: "No changes to save.", error: false }; 
+     return { message: "No changes to save.", error: false };
   }
 
   try {
     const updatedFields = await updateFirebaseUserProfile(userIdFromForm, updates);
     revalidatePath('/profile/settings');
-    revalidatePath('/dashboard'); 
+    revalidatePath('/dashboard');
     return { message: 'Profile updated successfully!', error: false, updatedProfile: updatedFields };
   } catch (e: any) {
     return {
@@ -261,14 +293,14 @@ export async function updateUserProfileAction(
 
 export async function featureServerAction(
   serverId: string,
-  requestingUserId: string | undefined, 
+  requestingUserId: string | undefined,
   durationDays?: number
 ): Promise<{ success: boolean; message: string; server?: Server }> {
-  
+
   if (!requestingUserId) {
     return { success: false, message: "User ID not provided for feature request." };
   }
-  
+
   const profile = await getUserProfile(requestingUserId);
   if (!profile) {
     return { success: false, message: "Requesting user profile not found." };
@@ -278,10 +310,10 @@ export async function featureServerAction(
   try {
     const server = await updateServerFeaturedStatus(serverId, true, durationDays);
     if (server) {
-      revalidatePath("/admin/servers"); 
-      revalidatePath(`/servers/${serverId}`); 
-      revalidatePath("/"); 
-      revalidatePath("/dashboard"); 
+      revalidatePath("/admin/servers");
+      revalidatePath(`/servers/${serverId}`);
+      revalidatePath("/");
+      revalidatePath("/dashboard");
       return {
         success: true,
         message: `Server "${server.name}" has been featured.`,
@@ -296,13 +328,13 @@ export async function featureServerAction(
 
 export async function unfeatureServerAction(
   serverId: string,
-  adminUserId: string | undefined 
+  adminUserId: string | undefined
 ): Promise<{ success: boolean; message: string; server?: Server }> {
   if (!adminUserId || !(await isAdmin(adminUserId))) {
     return { success: false, message: "Unauthorized: Admin role required to unfeature." };
   }
   try {
-    const server = await updateServerFeaturedStatus(serverId, false); 
+    const server = await updateServerFeaturedStatus(serverId, false);
     if (server) {
       revalidatePath("/admin/servers");
       revalidatePath(`/servers/${serverId}`);
@@ -357,13 +389,13 @@ export async function reportServerAction(
       serverId,
       serverName,
       reportingUserId,
-      reportingUserDisplayName: reportingUserDisplayName || 'Unknown User', 
+      reportingUserDisplayName: reportingUserDisplayName || 'Unknown User',
       reason: parsed.data.reason,
       description: parsed.data.description,
     };
     await addFirebaseReport(reportData);
-    revalidatePath(`/servers/${serverId}`); 
-    revalidatePath('/admin/reports'); 
+    revalidatePath(`/servers/${serverId}`);
+    revalidatePath('/admin/reports');
     return { message: "Server reported successfully. Our team will review it shortly.", error: false };
   } catch (e: any) {
     return { message: e.message || "Failed to submit report.", error: true };
@@ -376,7 +408,7 @@ export async function resolveReportAction(
   newStatus: ReportStatus,
   adminNotes?: string
 ): Promise<{ success: boolean; message: string; report?: Report }> {
-  if (!adminUserId || !await isAdmin(adminUserId)) { 
+  if (!adminUserId || !await isAdmin(adminUserId)) {
     return { success: false, message: "Unauthorized: Admin role required." };
   }
 
