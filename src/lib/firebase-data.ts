@@ -25,7 +25,7 @@ import type { z } from 'zod';
 import { db, auth } from './firebase';
 import type { Server, Game, ServerStatus, UserProfile, SortOption, VotedServerInfo, Report, ReportStatus, ReportReason } from './types';
 import { serverFormSchema } from '@/lib/schemas';
-// Removed: import { GameDig } from 'gamedig'; - No longer needed here
+
 
 function formatFirebaseError(error: any, context: string): string {
   let message = `Error ${context}: `;
@@ -45,7 +45,7 @@ function formatFirebaseError(error: any, context: string): string {
   } else {
     message += 'An unknown error occurred.';
   }
-  console.error(message, error);
+  // console.error(message, error); // Keep this for debugging during development
   return message;
 }
 
@@ -98,13 +98,13 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
         ...data,
         uid: docSnap.id,
         createdAt: toRequiredISODateString(data.createdAt),
-        emailVerified: data.emailVerified ?? false,
+        emailVerified: data.emailVerified ?? false, // Ensure emailVerified is boolean
       } as UserProfile;
     }
     return null;
   } catch (error) {
     const specificMessage = formatFirebaseError(error, `getting user profile for UID ${uid}`);
-    console.error(specificMessage, error);
+    // console.error(specificMessage, error);
     throw new Error(specificMessage);
   }
 }
@@ -115,8 +115,11 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
     throw new Error(formatFirebaseError({ message: errorMsg }, "creating user profile"));
   }
 
-  const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "hossainmdbappi701@gmail.com";
-  const role: 'user' | 'admin' = (adminEmail && user.email === adminEmail) ? 'admin' : 'user';
+  const envAdminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+  const hardcodedAdminEmail = "hossainmdbappi701@gmail.com";
+  
+  const isAdminByEmail = (envAdminEmail && user.email === envAdminEmail) || user.email === hardcodedAdminEmail;
+  const role: 'user' | 'admin' = isAdminByEmail ? 'admin' : 'user';
 
   const userProfileData: Omit<UserProfile, 'createdAt' | 'emailVerified'> & { createdAt: FieldValue; emailVerified: boolean } = {
     uid: user.uid,
@@ -139,10 +142,10 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
             ...data,
             uid: profileSnap.id,
             createdAt: toRequiredISODateString(data.createdAt, new Date().toISOString()),
-            emailVerified: data.emailVerified ?? false,
+            emailVerified: data.emailVerified ?? false, // Ensure emailVerified is boolean
         } as UserProfile;
     }
-    console.warn("createUserProfile: profileSnap did not exist after setDoc. Returning constructed profile.");
+    // console.warn("createUserProfile: profileSnap did not exist after setDoc. Returning constructed profile.");
     return {
         uid: user.uid,
         email: user.email,
@@ -156,7 +159,7 @@ export async function createUserProfile(user: FirebaseUserType): Promise<UserPro
   } catch (error: any) {
      const specificMessage = formatFirebaseError(error, `creating/updating user profile in Firestore for UID ${user.uid}`);
      // Error message already includes Firebase error code and message due to formatFirebaseError
-     console.error(specificMessage, error);
+    //  console.error(specificMessage, error);
      throw new Error(specificMessage);
   }
 }
@@ -199,13 +202,11 @@ export type ServerDataForCreation = Omit<z.infer<typeof serverFormSchema>, 'tags
   tags: string[];
   port: number;
   submittedBy: string;
-  // Add initial stats to be passed in
   initialIsOnline: boolean;
   initialPlayerCount: number;
   initialMaxPlayers: number;
 };
 
-// Removed: getServerOnlineStatus function - this is now handled by the API route
 
 export async function getFirebaseServers(
   gameFilter: string = 'all',
@@ -232,55 +233,46 @@ export async function getFirebaseServers(
     if (submittedByUserId) {
       qConstraints.push(where('submittedBy', '==', submittedByUserId));
     }
+    
+    const addSortConstraints = (primaryField: keyof Server, primaryDirection: 'asc' | 'desc' = 'desc') => {
+        if (primaryField !== 'isFeatured') qConstraints.push(orderBy('isFeatured', 'desc'));
+        if (primaryField !== 'featuredUntil') qConstraints.push(orderBy('featuredUntil', 'desc'));
+        qConstraints.push(orderBy(primaryField, primaryDirection));
+    };
 
-    // Define base sorting order which might be overridden or augmented
-    let baseOrderByField: keyof Server = 'votes';
-    let baseOrderByDirection: 'asc' | 'desc' = 'desc';
 
-    // Apply sorting logic based on sortBy parameter
     switch (sortBy) {
       case 'featured':
-        // Prioritize featured servers
         qConstraints.push(orderBy('isFeatured', 'desc'));
-        qConstraints.push(orderBy('featuredUntil', 'desc')); // Sort by expiry date if featured
-        // Fallback sorting for featured/non-featured
-        qConstraints.push(orderBy('votes', 'desc'));
-        qConstraints.push(orderBy('playerCount', 'desc'));
+        qConstraints.push(orderBy('featuredUntil', 'desc'));
+        qConstraints.push(orderBy('votes', 'desc')); // Fallback for equally featured
         break;
       case 'votes':
-        qConstraints.push(orderBy('isFeatured', 'desc')); // Keep featured on top
-        qConstraints.push(orderBy('featuredUntil', 'desc'));
-        qConstraints.push(orderBy('votes', 'desc'));
+        addSortConstraints('votes', 'desc');
         break;
       case 'playerCount':
-        qConstraints.push(orderBy('isFeatured', 'desc')); // Keep featured on top
-        qConstraints.push(orderBy('featuredUntil', 'desc'));
-        qConstraints.push(orderBy('isOnline', 'desc'));
+        addSortConstraints('isOnline', 'desc'); // Ensure online servers with players are listed first if filtering by player count
         qConstraints.push(orderBy('playerCount', 'desc'));
         break;
       case 'name':
-        qConstraints.push(orderBy('isFeatured', 'desc')); // Keep featured on top
-        qConstraints.push(orderBy('featuredUntil', 'desc'));
-        qConstraints.push(orderBy('name', 'asc'));
+        addSortConstraints('name', 'asc');
         break;
       case 'submittedAt':
-        qConstraints.push(orderBy('isFeatured', 'desc')); // Keep featured on top
-        qConstraints.push(orderBy('featuredUntil', 'desc'));
-        qConstraints.push(orderBy('submittedAt', 'desc'));
+        addSortConstraints('submittedAt', 'desc');
         break;
       default:
-        // Default to featured -> votes -> player count
+        // Default to featured -> votes
         qConstraints.push(orderBy('isFeatured', 'desc'));
         qConstraints.push(orderBy('featuredUntil', 'desc'));
         qConstraints.push(orderBy('votes', 'desc'));
-        qConstraints.push(orderBy('playerCount', 'desc'));
     }
-
-    // Add a final tie-breaker sort by name if not already the primary sort, for consistent ordering
-    // Ensure the primary sort field isn't 'name' before adding this
-    const primarySortField = sortBy === 'featured' ? 'votes' : sortBy; // Determine primary sort field after featured
-    if (primarySortField !== 'name') {
-       qConstraints.push(orderBy('name', 'asc'));
+    
+    // Add a final universal tie-breaker sort by name if not already the primary sort,
+    // This helps ensure consistent ordering when primary sort values are identical.
+    // Only add if 'name' is not already the primary sorting field from the switch case.
+    const isNamePrimarySort = qConstraints.some(c => (c as any)._field?.segments?.join('/') === 'name' && (c as any)._direction !== undefined);
+    if (!isNamePrimarySort) {
+         qConstraints.push(orderBy('name', 'asc'));
     }
 
 
@@ -305,6 +297,7 @@ export async function getFirebaseServers(
     });
 
     // Client-side filtering for search term after fetching sorted/filtered data
+    // Firestore doesn't support partial text search on multiple fields easily.
     if (searchTerm) {
       const lowerSearchTerm = searchTerm.toLowerCase();
       serverList = serverList.filter(
@@ -347,7 +340,7 @@ export async function getFirebaseServerById(id: string): Promise<Server | null> 
   }
 }
 
-// Updated to accept initial stats
+
 export async function addFirebaseServer(
   serverDataInput: ServerDataForCreation
 ): Promise<Server> {
@@ -355,11 +348,10 @@ export async function addFirebaseServer(
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "adding Firebase server. Database service not available."));
   }
 
-  // Initial stats are now passed in
   const { initialIsOnline, initialPlayerCount, initialMaxPlayers, ...restOfData } = serverDataInput;
 
   const dataToSave: { [key: string]: any } = {
-    ...restOfData, // Includes name, ip, port, game, desc, tags, submittedBy, bannerUrl, logoUrl
+    ...restOfData,
     tags: serverDataInput.tags && serverDataInput.tags.length > 0 ? serverDataInput.tags : [],
     votes: 0,
     submittedAt: serverTimestamp() as FieldValue,
@@ -573,6 +565,7 @@ export async function deleteFirebaseUserFirestoreData(uid: string): Promise<void
     const userDocRef = doc(db, 'users', uid);
     batch.delete(userDocRef);
 
+    // Also delete user's votes subcollection documents if any
     const votesCollectionRef = collection(db, 'users', uid, 'votes');
     const votesSnapshot = await getDocs(votesCollectionRef);
     votesSnapshot.docs.forEach(voteDoc => batch.delete(voteDoc.ref));
@@ -589,10 +582,11 @@ export async function getServersCountByStatus(status?: ServerStatus | 'all'): Pr
     throw new Error(formatFirebaseError({message: "Firestore (db) is not initialized."}, "getting server count by status. Database service not available."));
   }
   try {
-    let q = query(collection(db, 'servers'));
+    let qConstraints: QueryConstraint[] = [];
     if (status && status !== 'all') {
-      q = query(q, where('status', '==', status));
+      qConstraints.push(where('status', '==', status));
     }
+    const q = query(collection(db, 'servers'), ...qConstraints);
     const snapshot = await getDocs(q);
     return snapshot.size;
   } catch (error) {
@@ -695,7 +689,7 @@ export async function updateServerStatsInFirestore(
   statsToUpdate: { isOnline: boolean; playerCount?: number; maxPlayers?: number }
 ): Promise<void> {
   if (!db) {
-    console.warn("updateServerStatsInFirestore: Firestore (db) is not initialized. Skipping stat update.");
+    // console.warn("updateServerStatsInFirestore: Firestore (db) is not initialized. Skipping stat update.");
     return;
   }
   const serverRef = doc(db, 'servers', serverId);
@@ -703,7 +697,7 @@ export async function updateServerStatsInFirestore(
   try {
     const serverSnap = await getDoc(serverRef);
     if (!serverSnap.exists()) {
-      console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
+      // console.warn(`updateServerStatsInFirestore: Server ${serverId} not found. Skipping stat update.`);
       return;
     }
     const serverData = serverSnap.data();
@@ -714,18 +708,18 @@ export async function updateServerStatsInFirestore(
 
     const updatePayload: Partial<Server> = {
       isOnline: statsToUpdate.isOnline,
-      playerCount: statsToUpdate.playerCount ?? (serverData.playerCount ?? 0), // Persist old if undefined
+      playerCount: statsToUpdate.playerCount ?? (serverData.playerCount ?? 0), 
     };
-    // Only update maxPlayers if it's provided in statsToUpdate
+    
     if (statsToUpdate.maxPlayers !== undefined) {
       updatePayload.maxPlayers = statsToUpdate.maxPlayers;
     } else {
-      updatePayload.maxPlayers = serverData.maxPlayers ?? 50; // Persist old or default
+      updatePayload.maxPlayers = serverData.maxPlayers ?? 50;
     }
 
     await updateDoc(serverRef, updatePayload as { [x: string]: any });
   } catch (error) {
-    console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
+    // console.error(formatFirebaseError(error, `updating stats for server ${serverId} in Firestore`));
   }
 }
 
@@ -735,7 +729,6 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
   }
   try {
     const votesColRef = collection(db, 'users', userId, 'votes');
-    // Order by votedAt descending to get the most recent votes first
     const votesQuery = query(votesColRef, orderBy('votedAt', 'desc'));
     const votesSnapshot = await getDocs(votesQuery);
 
@@ -751,7 +744,6 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
     const serverIds = votedServerEntries.map(entry => entry.serverId);
     const votedServersDetails: VotedServerInfo[] = [];
 
-    // Fetch server details in batches
     const batchSize = 30; // Firestore 'in' query limit is 30
     for (let i = 0; i < serverIds.length; i += batchSize) {
       const serverIdsBatch = serverIds.slice(i, i + batchSize);
@@ -794,7 +786,6 @@ export async function getUserVotedServerDetails(userId: string): Promise<VotedSe
       });
     }
 
-    // Ensure the final list is sorted by votedAt descending, as fetching might reorder
     votedServersDetails.sort((a, b) => new Date(b.votedAt).getTime() - new Date(a.votedAt).getTime());
 
     return votedServersDetails;
@@ -827,10 +818,10 @@ export async function updateServerFeaturedStatus(
       const featuredUntilDate = new Date();
       featuredUntilDate.setDate(featuredUntilDate.getDate() + durationDays);
       updates.featuredUntil = Timestamp.fromDate(featuredUntilDate) as any;
-    } else if (!isFeatured) {
+    } else if (!isFeatured) { // Explicitly unfeaturing
       updates.featuredUntil = null;
-    } else if (isFeatured && !durationDays){
-        updates.featuredUntil = null; // Indefinite feature
+    } else if (isFeatured && (durationDays === undefined || durationDays <= 0) ){ // Featuring indefinitely
+        updates.featuredUntil = null; 
     }
 
 
@@ -938,7 +929,6 @@ export async function updateFirebaseReportStatus(
     if (adminNotes !== undefined) {
       updates.adminNotes = adminNotes;
     }
-    // If status is changed back to pending or investigating, clear resolved fields
     if (status === 'pending' || status === 'investigating') {
         updates.resolvedBy = null;
         updates.resolvedAt = null;
@@ -961,3 +951,4 @@ export async function updateFirebaseReportStatus(
     throw new Error(formatFirebaseError(error, `updating report status (${reportId} to ${status})`));
   }
 }
+

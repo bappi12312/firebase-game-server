@@ -1,3 +1,4 @@
+
 'use client';
 
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -62,8 +63,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentUser) {
         try {
           let profile = await getUserProfile(currentUser.uid);
-          const adminEmailValue = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "hossainmdbappi701@gmail.com";
-          const isCurrentUserAdminByEmail = currentUser.email === adminEmailValue;
+          
+          const envAdminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+          const hardcodedAdminEmail = "hossainmdbappi701@gmail.com";
+          
+          // User is admin if their email matches the env variable OR the hardcoded admin email
+          const isCurrentUserAdminByEmail = 
+            (envAdminEmail && currentUser.email === envAdminEmail) || 
+            currentUser.email === hardcodedAdminEmail;
 
           if (!profile && db) { 
             // console.log(`AuthContext: Profile not found for ${currentUser.uid}, attempting to create.`);
@@ -72,11 +79,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else if (profile) {
             // Profile exists, check if role needs correction
             if (isCurrentUserAdminByEmail && profile.role !== 'admin') {
-              // console.log(`AuthContext: User ${currentUser.email} is admin by email, but role is ${profile.role}. Updating role in Firestore.`);
+              // console.log(`AuthContext: User ${currentUser.email} is admin by designated email, but role is ${profile.role}. Updating role in Firestore.`);
               await updateUserFirebaseRole(currentUser.uid, 'admin');
               profile.role = 'admin'; // Update local profile object immediately
             } else if (!isCurrentUserAdminByEmail && profile.role === 'admin') {
-              // console.log(`AuthContext: User ${currentUser.email} is no longer admin by email, but role is admin. Updating role in Firestore.`);
+              // console.log(`AuthContext: User ${currentUser.email} is no longer admin by designated email, but role is admin. Updating role in Firestore.`);
               await updateUserFirebaseRole(currentUser.uid, 'user');
               profile.role = 'user'; // Update local profile object immediately
             }
@@ -114,15 +121,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   if (!isMounted || _loadingInternal) {
     return (
-      <div className="flex flex-col min-h-screen">
+      <div className="flex flex-col min-h-screen bg-background">
         <header className="bg-primary text-primary-foreground shadow-md sticky top-0 z-50">
           <div className="container mx-auto px-4 py-3 flex items-center justify-between h-[60px]">
-            <Skeleton className="h-8 w-48" />
-            <Skeleton className="h-10 w-10 rounded-full" />
+            <Skeleton className="h-8 w-48 bg-primary-foreground/20" />
+            <Skeleton className="h-10 w-10 rounded-full bg-primary-foreground/20" />
           </div>
         </header>
         <main className="flex-grow container mx-auto px-4 py-8">
-          <Skeleton className="h-[calc(100vh-150px)] w-full" />
+          <Skeleton className="h-[calc(100vh-150px)] w-full bg-muted" />
         </main>
       </div>
     );
