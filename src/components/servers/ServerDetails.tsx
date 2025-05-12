@@ -16,8 +16,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-// Removed: import { getServerOnlineStatus, updateServerStatsInFirestore } from '@/lib/firebase-data';
-import { updateServerStatsInFirestore } from '@/lib/firebase-data'; // Keep this
+import { updateServerStatsInFirestore } from '@/lib/firebase-data';
 import { useRouter } from 'next/navigation';
 
 interface ServerDetailsProps {
@@ -30,7 +29,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const router = useRouter();
 
   const [server, setServer] = useState(initialServerData);
-  const [isLoadingStats, setIsLoadingStats] = useState(true); // Start as loading
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
   const [isVotePending, startVoteTransition] = useTransition();
   const [votedRecently, setVotedRecently] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('N/A');
@@ -41,7 +40,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
 
   useEffect(() => {
     setServer(initialServerData);
-    setIsLoadingStats(true); // Reset loading on prop change
+    setIsLoadingStats(true); 
   }, [initialServerData]);
 
   useEffect(() => {
@@ -60,7 +59,6 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   const fetchAndUpdateStats = useCallback(async () => {
     if (server.status !== 'approved' || !server.ipAddress || !server.port || !server.id) {
       setIsLoadingStats(false);
-      // Set defaults if not approved
        setServer(prevServer => ({
          ...prevServer,
          isOnline: prevServer.isOnline ?? false,
@@ -80,16 +78,13 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
       }
       const stats = await response.json();
 
-      // Update local state first
       setServer(prevServer => ({
           ...prevServer,
           isOnline: stats.isOnline,
           playerCount: stats.playerCount,
           maxPlayers: stats.maxPlayers,
-          // name: stats.name || prevServer.name, // Optional update
       }));
 
-      // Then update Firestore asynchronously
       updateServerStatsInFirestore(server.id, {
           isOnline: stats.isOnline,
           playerCount: stats.playerCount,
@@ -102,11 +97,11 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     } finally {
       setIsLoadingStats(false);
     }
-  }, [server.id, server.ipAddress, server.port, server.status, server.name]); // Dependencies
+  }, [server.id, server.ipAddress, server.port, server.status, server.name]);
 
   useEffect(() => {
     fetchAndUpdateStats();
-    const intervalId = setInterval(fetchAndUpdateStats, 30000); // Fetch every 30 seconds
+    const intervalId = setInterval(fetchAndUpdateStats, 30000);
     return () => clearInterval(intervalId);
   }, [fetchAndUpdateStats]);
 
@@ -197,7 +192,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     setServer(updatedServer);
   };
 
-  const infoCards = [
+  const infoCardsData = [
     { key: 'game', Icon: Gamepad2, label: "Game", value: server.game || 'N/A' },
     {
       key: 'status',
@@ -218,7 +213,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
   ];
 
   if (server.status !== 'approved') {
-    infoCards.push({
+    infoCardsData.push({
       key: 'serverStatus',
       Icon: AlertCircle,
       label: "Server Status",
@@ -227,10 +222,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
     });
   }
   if (isCurrentlyFeatured && server.featuredUntil) {
-    infoCards.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
+    infoCardsData.push({ key: 'featuredUntil', Icon: CalendarClock, label: "Featured Until", value: format(new Date(server.featuredUntil), "PP"), iconClassName: "text-yellow-500" });
   }
   if (isIndefinitelyFeatured) {
-    infoCards.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
+    infoCardsData.push({ key: 'featuredActive', Icon: Star, label: "Featured", value: "Active", iconClassName: "text-yellow-500 fill-yellow-500" });
   }
 
 
@@ -275,12 +270,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         )}
       </CardHeader>
       <CardContent className="p-6 space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-            <Button onClick={() => router.back()} variant="outline" size="sm" className="self-start sm:self-center">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back
-            </Button>
-        </div>
+        
         <div className="flex flex-col md:flex-row justify-between md:items-start gap-4">
             <CardTitle className="text-3xl font-bold text-primary">{server.name || 'Unnamed Server'}</CardTitle>
             <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
@@ -294,10 +284,10 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
                         <Button asChild size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={!server.ipAddress || !server.port}>
                             <a
                             href={server.ipAddress && server.port ? `steam://connect/${server.ipAddress}:${server.port}` : '#'}
-                            target="_blank" // Good practice for external protocols
-                            rel="noopener noreferrer" // Security for target="_blank"
+                            target="_blank" 
+                            rel="noopener noreferrer" 
                             title={server.ipAddress && server.port ? "Connect via Steam (requires Steam client)" : "Connection info missing"}
-                            onClick={(e) => { if (!server.ipAddress || !server.port) e.preventDefault(); }} // Prevent navigation if disabled
+                            onClick={(e) => { if (!server.ipAddress || !server.port) e.preventDefault(); }} 
                             >
                             <ExternalLink className="w-4 h-4 mr-2" />
                             Connect
@@ -321,7 +311,7 @@ export function ServerDetails({ server: initialServerData }: ServerDetailsProps)
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-          {infoCards.map(({ key, ...cardProps }) => <InfoCard key={key} {...cardProps} />)}
+          {infoCardsData.map(({ key, ...cardProps }) => <InfoCard key={key} {...cardProps} />)}
         </div>
 
         <div>
